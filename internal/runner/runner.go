@@ -57,6 +57,16 @@ type Runner struct {
 	cancels map[string]context.CancelFunc
 
 	drivers *driverCache // which Maestro's driver each phone carries
+
+	// restartScreen brings an iPhone's live screen (WebDriverAgent) back and
+	// returns once it is up; nil on a farm without iOS provisioning
+	restartScreen func(ctx context.Context, deviceID string) error
+}
+
+// SetScreenRestarter wires the live-screen restart the iOS integration_test
+// run needs after its XCTest session has pushed WebDriverAgent aside.
+func (r *Runner) SetScreenRestarter(f func(ctx context.Context, deviceID string) error) {
+	r.restartScreen = f
 }
 
 // New builds a Runner. dir is created on first use; maestroBin defaults to

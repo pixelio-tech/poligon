@@ -73,6 +73,9 @@ func (r *Runner) runIntegrationTestIOS(ctx context.Context, run model.Run, dev m
 		return
 	}
 	rd.Artifacts = append(rd.Artifacts, "xcodebuild.log")
+	if r.ios != nil {
+		r.ios.BeginXCTest(dev.ID)
+	}
 	cmd := exec.CommandContext(ctx, "xcodebuild", "test-without-building",
 		"-xctestrun", tb.XCTestRun,
 		"-destination", "id="+dev.UDID,
@@ -83,6 +86,9 @@ func (r *Runner) runIntegrationTestIOS(ctx context.Context, run model.Run, dev m
 	cmd.Stderr = cmd.Stdout
 	runErr := cmd.Run()
 	logf.Close()
+	if r.ios != nil {
+		r.ios.EndXCTest(dev.ID)
+	}
 
 	sum, sumErr := xcresultSummary(ctx, result)
 	if sumErr == nil {
@@ -96,15 +102,7 @@ func (r *Runner) runIntegrationTestIOS(ctx context.Context, run model.Run, dev m
 		}
 		_ = os.RemoveAll(result)
 	}
-	if img, mime, err := r.cap.Screenshot(ctx, dev); err == nil {
-		name := "screenshot.png"
-		if mime == "image/jpeg" {
-			name = "screenshot.jpg"
-		}
-		if os.WriteFile(filepath.Join(devDir, name), img, 0o644) == nil {
-			rd.Artifacts = append(rd.Artifacts, name)
-		}
-	}
+	r.screenshotAfterXCTest(ctx, dev, rd, devDir)
 	r.saveLog(ctx, dev, rd, devDir)
 
 	switch {
@@ -117,6 +115,39 @@ func (r *Runner) runIntegrationTestIOS(ctx context.Context, run model.Run, dev m
 	default:
 		rd.Status, rd.Detail = model.RunError, "xcodebuild could not run the tests: "+xcodebuildWhy(tailBuf.String())
 	}
+}
+
+// screenshotAfterXCTest takes the closing screenshot. The test's XCTest
+// session usually leaves WebDriverAgent (which takes screenshots and runs the
+// live screen) dead, so on a failure the screen is restarted first — which
+// also gives the next person a working live screen.
+func (r *Runner) screenshotAfterXCTest(ctx context.Context, dev model.Device, rd *model.RunDevice, devDir string) {
+	shoot := func() bool {
+		sctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		img, mime, err := r.cap.Screenshot(sctx, dev)
+		if err != nil {
+			return false
+		}
+		name := "screenshot.png"
+		if mime == "image/jpeg" {
+			name = "screenshot.jpg"
+		}
+		if os.WriteFile(filepath.Join(devDir, name), img, 0o644) == nil {
+			rd.Artifacts = append(rd.Artifacts, name)
+		}
+		return true
+	}
+	if shoot() || r.restartScreen == nil || ctx.Err() != nil {
+		return
+	}
+	rctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	if err := r.restartScreen(rctx, dev.ID); err != nil {
+		r.log.Warn("integration_test: could not bring the live screen back", "device", dev.ID, "err", err)
+		return
+	}
+	shoot()
 }
 
 // xcSummary is the part of `xcresulttool get test-results summary` we use.

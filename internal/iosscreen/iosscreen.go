@@ -46,6 +46,7 @@ type Controller struct {
 	mu       sync.Mutex
 	sessions map[string]string  // device id -> WDA sessionId
 	sizes    map[string][2]int  // device id -> screen size in points, until rotated
+	xctest   map[string]bool    // device id -> a test run's XCTest session owns it
 	streams  map[string]*stream // device id -> the one shared screen reader
 	client   *http.Client
 	// screen streams are long-lived, so they cannot use the request client's timeout
@@ -403,4 +404,34 @@ func (c *Controller) FrameCount(deviceID string) (uint64, bool) {
 		return 0, false
 	}
 	return s.frames(), true
+}
+
+// A test run's own XCTest session (xcodebuild test-without-building) pushes
+// WebDriverAgent's session aside for as long as it runs: WDA stops answering,
+// and the watchdog would "heal" it by starting WDA again — whose XCTest
+// session can in turn kill the test mid-run. The runner marks the device for
+// the duration, and the watchdog leaves it alone.
+
+// BeginXCTest marks a device as running a test run's XCTest session.
+func (c *Controller) BeginXCTest(deviceID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.xctest == nil {
+		c.xctest = map[string]bool{}
+	}
+	c.xctest[deviceID] = true
+}
+
+// EndXCTest clears BeginXCTest.
+func (c *Controller) EndXCTest(deviceID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.xctest, deviceID)
+}
+
+// InXCTest reports whether a test run's XCTest session owns the device now.
+func (c *Controller) InXCTest(deviceID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.xctest[deviceID]
 }

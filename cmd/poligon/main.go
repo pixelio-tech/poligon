@@ -131,6 +131,25 @@ func serve(log *slog.Logger, cfgPath string, devFlag bool) error {
 	capt := capture.New(adb.New(cfg.ADBPath), iosCtl, ios.Default())
 	run := runner.New(st, res, inst, capt, adb.New(cfg.ADBPath), iosCtl,
 		filepath.Join(cfg.StorageDir, "runs"), os.Getenv("POLIGON_MAESTRO"), log)
+	run.SetScreenRestarter(func(ctx context.Context, id string) error {
+		if _, err := prov.RestartScreen(id); err != nil {
+			return err
+		}
+		for {
+			j, ok := prov.Get(id)
+			if !ok || j.State != "running" {
+				if ok && j.State == "failed" {
+					return fmt.Errorf("screen restart failed: %s", j.Err)
+				}
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+		}
+	})
 	srv := api.New(cfg, st, res, inst, lp, iosCtl, prov, capt, run, http.FS(webui.FS()), log)
 	srv.SetLibrary(lib)
 	handler := srv.Handler(a)

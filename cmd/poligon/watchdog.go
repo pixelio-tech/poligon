@@ -53,6 +53,12 @@ func depsWatchdog(ctx context.Context, cfg config.Config, st *store.Store, prov 
 			if r.WDA == "" {
 				continue
 			}
+			if screens.InXCTest(r.DeviceID) {
+				// a test run owns the phone's XCTest session; the runner
+				// brings the screen back when it is done
+				delete(heal, r.DeviceID)
+				continue
+			}
 			hs := heal[r.DeviceID]
 			if hs == nil {
 				hs = &healState{windowStart: time.Now()}
