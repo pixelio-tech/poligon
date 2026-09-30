@@ -47,24 +47,50 @@ func (r *Runner) runMaestro(ctx context.Context, run model.Run, dev model.Device
 	report := filepath.Join(devDir, "report.xml")
 	debug := filepath.Join(devDir, "maestro")
 
+	// keep Maestro's driver on the phone between runs (see maestro_driver.go);
+	// a phone whose driver came from another Maestro version is cleared first
+	ver := r.maestroVersion(ctx)
+	trusted := r.drivers.current(dev.Serial, ver)
+	if !trusted {
+		r.clearMaestroDriver(ctx, dev.Serial)
+	}
+
 	var buf bytes.Buffer
 	var runErr error
 	for attempt := 1; ; attempt++ {
+		_ = os.Remove(report)
 		cmd := exec.CommandContext(ctx, r.maestro, maestroArgs(run.Spec, dev, target, report, debug)...)
 		cmd.Env = append(os.Environ(), "MAESTRO_CLI_NO_ANALYTICS=1", "CI=true")
 		procgroup.Bind(cmd) // a cancel/timeout takes the whole tree down, not only the wrapper
 		start := buf.Len()
 		cmd.Stdout, cmd.Stderr = &buf, &buf
 		runErr = cmd.Run()
+		_, repErr := os.Stat(report)
+		if runErr == nil || attempt == 2 || ctx.Err() != nil {
+			break
+		}
 		// MIUI answers the install of Maestro's on-device driver with a
 		// "install via USB?" prompt that it sometimes declines on its own —
 		// the same run passes when simply started again
-		if runErr == nil || attempt == 2 || ctx.Err() != nil ||
-			!driverInstallRefused(buf.Bytes()[start:]) {
-			break
+		if driverInstallRefused(buf.Bytes()[start:]) {
+			r.log.Info("maestro: driver install refused by the phone, retrying", "run", run.ID, "device", dev.ID)
+			fmt.Fprintf(&buf, "\n--- poligon: the phone refused to install Maestro's driver (INSTALL_FAILED_USER_RESTRICTED); retrying once ---\n\n")
+			continue
 		}
-		r.log.Info("maestro: driver install refused by the phone, retrying", "run", run.ID, "device", dev.ID)
-		fmt.Fprintf(&buf, "\n--- poligon: the phone refused to install Maestro's driver (INSTALL_FAILED_USER_RESTRICTED); retrying once ---\n\n")
+		// no report at all means Maestro never got to run the flows; with a
+		// driver kept from an earlier run, that driver is the first suspect
+		if trusted && repErr != nil {
+			r.log.Info("maestro: run died before any flow with a kept driver, reinstalling it", "run", run.ID, "device", dev.ID)
+			fmt.Fprintf(&buf, "\n--- poligon: Maestro stopped before running any flow; reinstalling its driver on the phone and retrying once ---\n\n")
+			r.clearMaestroDriver(ctx, dev.Serial)
+			trusted = false
+			continue
+		}
+		break
+	}
+	// a report means the driver worked, whatever the flows' verdict
+	if _, err := os.Stat(report); err == nil {
+		r.drivers.mark(dev.Serial, ver)
 	}
 
 	if os.WriteFile(filepath.Join(devDir, "maestro.log"), buf.Bytes(), 0o644) == nil {
@@ -117,7 +143,7 @@ func (r *Runner) runMaestro(ctx context.Context, run model.Run, dev model.Device
 // them.
 func maestroArgs(spec model.RunSpec, dev model.Device, target, report, debug string) []string {
 	args := []string{"--device", target,
-		"test", "--format", "junit", "--output", report,
+		"test", "--no-reinstall-driver", "--format", "junit", "--output", report,
 		"--debug-output", debug}
 	keys := make([]string, 0, len(spec.Env))
 	for k := range spec.Env {

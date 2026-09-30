@@ -102,7 +102,7 @@ func TestMaestroArgs(t *testing.T) {
 	}
 	dev := model.Device{ID: "samsung-1", Platform: model.Android}
 	got := maestroArgs(spec, dev, "SERIAL", "/r.xml", "/dbg")
-	want := []string{"--device", "SERIAL", "test", "--format", "junit", "--output", "/r.xml",
+	want := []string{"--device", "SERIAL", "test", "--no-reinstall-driver", "--format", "junit", "--output", "/r.xml",
 		"--debug-output", "/dbg",
 		"-e", "CODE=0000", "-e", "PHONE=123",
 		"-e", "POLIGON_DEVICE_ID=samsung-1", "-e", "POLIGON_PLATFORM=android",

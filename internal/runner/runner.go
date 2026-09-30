@@ -55,6 +55,8 @@ type Runner struct {
 	wake    chan struct{}
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
+
+	drivers *driverCache // which Maestro's driver each phone carries
 }
 
 // New builds a Runner. dir is created on first use; maestroBin defaults to
@@ -69,6 +71,7 @@ func New(st *store.Store, res *reserve.Manager, inst *install.Installer, cap *ca
 		dir: dir, maestro: maestroBin, par: 4,
 		wake:    make(chan struct{}, 1),
 		cancels: map[string]context.CancelFunc{},
+		drivers: newDriverCache(filepath.Join(dir, ".maestro-drivers.json")),
 	}
 }
 
