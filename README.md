@@ -272,8 +272,8 @@ each (re)start is self-cleaning.
 - **iOS screen cost:** poligon reads each device's WebDriverAgent mjpeg stream
   **once** and fans it out to every viewer, so ten open tiles are still one
   stream on the phone. How much the phone sends is set in `devices.yaml` under
-  `ios_wda:` — `mjpeg_framerate` (20), `mjpeg_quality` (40) and `mjpeg_scale`
-  (60, percent). Raise them for a sharper wall, lower them if the phones or the
+  `ios_wda:` — `mjpeg_framerate` (12), `mjpeg_quality` (35) and `mjpeg_scale`
+  (50, percent). Raise them for a sharper wall, lower them if the phones or the
   host struggle. Run screenshots ignore these and come from WDA's full-quality
   `/screenshot`.
 - **Power loss:** with `scripts/host-setup.sh` applied (FileVault off, auto-login,

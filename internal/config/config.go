@@ -88,9 +88,9 @@ type IOSWDAConfig struct {
 	// on the device is far cheaper than shipping full-resolution frames over
 	// USB and re-encoding them on the host — a wall tile is ~300px wide, a
 	// modern iPhone screenshot is ~1200px.
-	MJPEGFramerate int `yaml:"mjpeg_framerate"` // frames per second WDA emits (default 20)
-	MJPEGQuality   int `yaml:"mjpeg_quality"`   // JPEG quality 1-100 (default 40)
-	MJPEGScale     int `yaml:"mjpeg_scale"`     // scaling factor 1-100 (default 60)
+	MJPEGFramerate int `yaml:"mjpeg_framerate"` // frames per second WDA emits (default 12)
+	MJPEGQuality   int `yaml:"mjpeg_quality"`   // JPEG quality 1-100 (default 35)
+	MJPEGScale     int `yaml:"mjpeg_scale"`     // scaling factor 1-100 (default 50)
 }
 
 // DeviceSpec is one entry in devices.yaml.
@@ -131,9 +131,9 @@ func Default() Config {
 			WDAPortBase:   18100,
 			MJPEGPortBase: 19100,
 
-			MJPEGFramerate: 20,
-			MJPEGQuality:   40,
-			MJPEGScale:     60,
+			MJPEGFramerate: 12,
+			MJPEGQuality:   35,
+			MJPEGScale:     50,
 		},
 	}
 }
