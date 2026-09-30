@@ -105,7 +105,7 @@ type typeIn struct {
 
 type keyIn struct {
 	DeviceID string `json:"device_id" jsonschema:"a device you hold"`
-	Key      string `json:"key" jsonschema:"back|home|enter|recents|power|volume_up|volume_down|delete|tab|escape|menu|search|wake (iOS: home, enter, volume_up, volume_down, wake)"`
+	Key      string `json:"key" jsonschema:"back|home|enter|recents|power|volume_up|volume_down|delete|tab|escape|menu|search|wake (iOS: home, enter, volume_up, volume_down, wake, back = swipe from the left edge, recents = app switcher, power = lock)"`
 }
 
 type urlIn struct {

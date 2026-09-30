@@ -251,8 +251,12 @@ function cell(d, url) {
       <button class="icon-btn" title="Характеристики" aria-label="Характеристики" onclick="toggleInfo('${d.id}')">${icon.info}</button>
       ${d.platform === "ios" ? `
       <span class="tile-rail-sep"></span>
+      <button class="icon-btn" title="Разбудить экран" aria-label="Разбудить экран" onclick="iosInput('${d.id}',{type:'wake'})">${icon.power}</button>
+      <button class="icon-btn" title="Громче" aria-label="Громче" onclick="iosInput('${d.id}',{type:'volume_up'})">${icon.volUp}</button>
+      <button class="icon-btn" title="Тише" aria-label="Тише" onclick="iosInput('${d.id}',{type:'volume_down'})">${icon.volDown}</button>
+      <button class="icon-btn" title="Назад (свайп от левого края)" aria-label="Назад" onclick="iosInput('${d.id}',{type:'back'})">${icon.back}</button>
       <button class="icon-btn" title="Домой" aria-label="Домой" onclick="iosInput('${d.id}',{type:'home'})">${icon.home}</button>
-      <button class="icon-btn" title="Разбудить экран" aria-label="Разбудить экран" onclick="iosInput('${d.id}',{type:'wake'})">${icon.power}</button>` : ""}
+      <button class="icon-btn" title="Переключатель приложений" aria-label="Переключатель приложений" onclick="iosInput('${d.id}',{type:'app_switcher'})">${icon.recents}</button>` : ""}
       ${d.platform === "android" ? `
       <span class="tile-rail-sep"></span>
       <button class="icon-btn" title="Питание" aria-label="Питание" onclick="keyEvent('${d.id}','power')">${icon.power}</button>

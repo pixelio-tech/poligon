@@ -400,31 +400,9 @@ func scanJPEGs(r io.Reader, s *stream) error {
 	}
 }
 
-// tuneMJPEG tells WDA how to encode its stream. Errors are not fatal: an older
-// WDA that ignores the settings simply keeps its defaults.
+// tuneMJPEG re-sends the session settings (mjpeg encoding included) — a WDA
+// that restarted under a cached session id comes back with its defaults.
+// Errors are not fatal: an older WDA that ignores a setting keeps its default.
 func (c *Controller) tuneMJPEG(deviceID string) {
-	if c.tune.Framerate <= 0 && c.tune.Quality <= 0 && c.tune.Scale <= 0 {
-		return
-	}
-	ep, ok := c.endpoint(deviceID)
-	if !ok || ep.WDA == "" {
-		return
-	}
-	base := "http://" + ep.WDA
-	sid, err := c.session(deviceID, base)
-	if err != nil {
-		return
-	}
-	settings := map[string]any{}
-	if c.tune.Framerate > 0 {
-		settings["mjpegServerFramerate"] = c.tune.Framerate
-	}
-	if c.tune.Quality > 0 {
-		settings["mjpegServerScreenshotQuality"] = c.tune.Quality
-	}
-	if c.tune.Scale > 0 {
-		settings["mjpegScalingFactor"] = c.tune.Scale
-	}
-	_ = c.post(fmt.Sprintf("%s/session/%s/appium/settings", base, sid),
-		map[string]any{"settings": settings})
+	_ = c.sessionPost(deviceID, "/appium/settings", map[string]any{"settings": c.sessionSettings()})
 }

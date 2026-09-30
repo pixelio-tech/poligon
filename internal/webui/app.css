@@ -639,6 +639,7 @@ body.ios-player {
 .player-bar .title { font: 500 12px/1 var(--mono); letter-spacing: 0.03em; color: var(--text); word-break: break-all; }
 .player-bar .status { font: 500 12px/1 var(--mono); color: var(--text-2); }
 .player-bar .sp { margin-left: auto; }
+.player-bar .stats { font: 500 12px/1 var(--mono); color: var(--text-2); font-variant-numeric: tabular-nums; }
 .page-error { flex: none; }
 .page-error:empty { display: none; }
 .player-stage {

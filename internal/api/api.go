@@ -138,6 +138,7 @@ func (s *Server) Handler(a *auth.Auth) http.Handler {
 	ios.HandleFunc("GET /ios/{id}/frame", s.iosFrame)
 	ios.HandleFunc("GET /ios/{id}/state", s.iosState)
 	ios.HandleFunc("POST /ios/{id}/input", s.iosInput)
+	ios.HandleFunc("GET /ios/{id}/control", s.iosControl)
 	ios.HandleFunc("POST /ios/{id}/restart", s.iosRestart)
 	ios.HandleFunc("GET /ios/{id}/job", s.iosJob)
 	ios.HandleFunc("GET /grid", s.screenGrid)

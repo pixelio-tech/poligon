@@ -53,6 +53,36 @@ for path in sorted(glob.glob(os.path.join(ws, "src/app/player/*.ts"))):
 print("    patched:", ", ".join(changed) if changed else "nothing (already at these values)")
 PY
 
+echo "==> patching the MSE player to stay at the live edge"
+python3 - "$WS_DIR" <<'PY'
+# ws-scrcpy's MSE player lets the <video> buffer drift up to 0.9 s behind on
+# Chrome/macOS and 2 s on Safari before it jumps to the end, and it measures
+# the drift against `end | 0` — the buffer end truncated to a whole second — so
+# the real lag could be a further second on top. Every one of those is latency
+# between a tap and seeing it. Keep ~150 ms (Safari needs more to not stutter),
+# measure against the real end, and speed playback up a little when behind
+# instead of only ever jumping.
+import os, sys
+path = os.path.join(sys.argv[1], "src/app/player/MsePlayer.ts")
+src = open(path).read()
+out = src.replace(
+    "private MAX_BUFFER = this.isSafari ? 2 : this.isChrome && this.isMac ? 0.9 : 0.2;",
+    "private MAX_BUFFER = this.isSafari ? 0.5 : 0.15;",
+)
+out = out.replace("if ((end | 0) - currentTime > this.MAX_BUFFER) {", "if (end - currentTime > this.MAX_BUFFER) {")
+marker = "            const buffered = end - currentTime;\n"
+catchup = marker + "            this.tag.playbackRate = buffered > 0.08 ? 1.2 : 1; // poligon: drift back to the live edge\n"
+if "poligon: drift back" not in out:
+    out = out.replace(marker, catchup, 1)
+if out != src:
+    open(path, "w").write(out)
+    print("    patched MsePlayer.ts")
+else:
+    print("    MsePlayer.ts already patched")
+if "poligon: drift back" not in out or "end | 0" in out:
+    sys.exit("MsePlayer.ts did not match — ws-scrcpy changed, update this patch")
+PY
+
 echo "==> rebuilding ws-scrcpy (takes a minute)"
 cd "$WS_DIR"
 npm run dist >/dev/null

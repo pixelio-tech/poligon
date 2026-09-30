@@ -45,6 +45,7 @@ type Controller struct {
 
 	mu       sync.Mutex
 	sessions map[string]string  // device id -> WDA sessionId
+	sizes    map[string][2]int  // device id -> screen size in points, until rotated
 	streams  map[string]*stream // device id -> the one shared screen reader
 	client   *http.Client
 	// screen streams are long-lived, so they cannot use the request client's timeout
@@ -60,8 +61,13 @@ func New(endpoints map[string]Endpoint, tune Tuning) *Controller {
 		endpoints: endpoints,
 		tune:      tune,
 		sessions:  map[string]string{},
+		sizes:     map[string][2]int{},
 		streams:   map[string]*stream{},
-		client:    &http.Client{Timeout: 10 * time.Second},
+		// every tap is a request over usbmux: keep the connections warm
+		client: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: &http.Transport{MaxIdleConnsPerHost: 4, IdleConnTimeout: 90 * time.Second},
+		},
 		streamClient: &http.Client{
 			Transport: &http.Transport{
 				DisableCompression: true, // frames are already JPEG
@@ -78,7 +84,8 @@ func (c *Controller) Set(deviceID string, ep Endpoint) {
 	defer c.mu.Unlock()
 	c.endpoints[deviceID] = ep
 	delete(c.sessions, deviceID) // force a fresh WDA session against the new endpoint
-	c.stopStream(deviceID)       // the old reader points at the previous WDA
+	delete(c.sizes, deviceID)
+	c.stopStream(deviceID) // the old reader points at the previous WDA
 }
 
 // Unset drops a device's endpoint — call when its WebDriverAgent has gone away,
@@ -89,6 +96,7 @@ func (c *Controller) Unset(deviceID string) {
 	defer c.mu.Unlock()
 	delete(c.endpoints, deviceID)
 	delete(c.sessions, deviceID)
+	delete(c.sizes, deviceID)
 	c.stopStream(deviceID)
 }
 
@@ -175,87 +183,36 @@ func (c *Controller) Screenshot(deviceID string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(out.Value)
 }
 
-// Input is one control action from the dashboard.
-type Input struct {
-	Type     string  `json:"type"` // tap | swipe | home | text | lock
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
-	X2       float64 `json:"x2"`
-	Y2       float64 `json:"y2"`
-	Duration float64 `json:"duration"` // seconds, for swipe
-	Text     string  `json:"text"`
-}
-
-// Do performs an input action against the device's WDA.
-func (c *Controller) Do(deviceID string, in Input) error {
-	ep, ok := c.endpoint(deviceID)
-	if !ok || ep.WDA == "" {
-		return fmt.Errorf("no ios screen endpoint for %q", deviceID)
-	}
-	base := "http://" + ep.WDA
-
-	switch in.Type {
-	case "home":
-		return c.post(base+"/wda/homescreen", nil)
-	case "wake":
-		// wakes the screen; fully unlocks only if the device has no passcode
-		return c.post(base+"/wda/unlock", nil)
-	case "text":
-		sid, err := c.session(deviceID, base)
-		if err != nil {
-			return err
-		}
-		return c.post(fmt.Sprintf("%s/session/%s/wda/keys", base, sid),
-			map[string]any{"value": []rune(in.Text)})
-	case "tap":
-		sid, err := c.session(deviceID, base)
-		if err != nil {
-			return err
-		}
-		return c.post(fmt.Sprintf("%s/session/%s/wda/tap", base, sid),
-			map[string]any{"x": in.X, "y": in.Y})
-	case "swipe":
-		sid, err := c.session(deviceID, base)
-		if err != nil {
-			return err
-		}
-		dur := in.Duration
-		if dur == 0 {
-			dur = 0.15
-		}
-		return c.post(fmt.Sprintf("%s/session/%s/wda/dragfromtoforduration", base, sid),
-			map[string]any{
-				"fromX": in.X, "fromY": in.Y,
-				"toX": in.X2, "toY": in.Y2, "duration": dur,
-			})
-	default:
-		return fmt.Errorf("unknown input type %q", in.Type)
-	}
-}
-
 // Size returns the device's logical screen size (points).
 func (c *Controller) Size(deviceID string) (w, h int, err error) {
-	ep, ok := c.endpoint(deviceID)
-	if !ok {
-		return 0, 0, fmt.Errorf("no ios screen endpoint for %q", deviceID)
-	}
-	base := "http://" + ep.WDA
-	sid, err := c.session(deviceID, base)
+	err = c.withSession(deviceID, func(base, sid string) error {
+		var out struct {
+			Value struct{ Width, Height int } `json:"value"`
+		}
+		if err := c.get(fmt.Sprintf("%s/session/%s/window/size", base, sid), &out); err != nil {
+			return err
+		}
+		w, h = out.Value.Width, out.Value.Height
+		return nil
+	})
+	return w, h, err
+}
+
+// get fetches a WDA JSON reply into out.
+func (c *Controller) get(u string, out any) error {
+	resp, err := c.client.Get(u)
 	if err != nil {
-		return 0, 0, err
-	}
-	resp, err := c.client.Get(fmt.Sprintf("%s/session/%s/window/size", base, sid))
-	if err != nil {
-		return 0, 0, err
+		return err
 	}
 	defer resp.Body.Close()
-	var out struct {
-		Value struct{ Width, Height int } `json:"value"`
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
+		if resp.StatusCode == http.StatusNotFound && bytes.Contains(b, []byte("invalid session id")) {
+			return fmt.Errorf("%w: %s", errSessionGone, b)
+		}
+		return fmt.Errorf("wda %s: %s: %s", u, resp.Status, b)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return 0, 0, err
-	}
-	return out.Value.Width, out.Value.Height, nil
+	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 // ActiveApp returns the bundle id and pid of the app currently in the
@@ -284,18 +241,29 @@ func (c *Controller) ActiveApp(deviceID string) (bundleID string, pid int, err e
 	return out.Value.BundleID, out.Value.PID, nil
 }
 
-// session returns a live WDA sessionId for the device, creating one if needed.
+// session returns the device's WDA sessionId, creating one if needed. It does
+// not probe the cached id — that was a second round trip over usbmux in front
+// of every tap. A dead session shows up as an error on the real request, and
+// withSession drops it and retries once.
 func (c *Controller) session(deviceID, base string) (string, error) {
 	c.mu.Lock()
 	sid := c.sessions[deviceID]
 	c.mu.Unlock()
-	if sid != "" && c.sessionAlive(base, sid) {
+	if sid != "" {
 		return sid, nil
 	}
 
+	// WDA's defaults suit test scripts, not a person driving the screen: before
+	// each action it waits for the app to go idle and for animations to cool
+	// off, which on a screen with a spinner is seconds per tap.
 	body, _ := json.Marshal(map[string]any{
 		"capabilities": map[string]any{
-			"alwaysMatch": map[string]any{"platformName": "iOS"},
+			"alwaysMatch": map[string]any{
+				"platformName":                               "iOS",
+				"shouldWaitForQuiescence":                    false,
+				"waitForIdleTimeout":                         0,
+				"shouldUseTestManagerForVisibilityDetection": false,
+			},
 		},
 	})
 	resp, err := c.client.Post(base+"/session", "application/json", bytes.NewReader(body))
@@ -314,20 +282,69 @@ func (c *Controller) session(deviceID, base string) (string, error) {
 	if out.Value.SessionID == "" {
 		return "", fmt.Errorf("wda returned no sessionId")
 	}
+	sid = out.Value.SessionID
+	_ = c.post(fmt.Sprintf("%s/session/%s/appium/settings", base, sid),
+		map[string]any{"settings": c.sessionSettings()})
 	c.mu.Lock()
-	c.sessions[deviceID] = out.Value.SessionID
+	c.sessions[deviceID] = sid
 	c.mu.Unlock()
-	return out.Value.SessionID, nil
+	return sid, nil
 }
 
-func (c *Controller) sessionAlive(base, sid string) bool {
-	resp, err := c.client.Get(fmt.Sprintf("%s/session/%s", base, sid))
-	if err != nil {
-		return false
+// sessionSettings is what every new session is told: no idle / animation
+// waits, and how to encode the mjpeg stream.
+func (c *Controller) sessionSettings() map[string]any {
+	settings := map[string]any{
+		"waitForIdleTimeout":      0,
+		"animationCoolOffTimeout": 0,
+		"snapshotTimeout":         5,
 	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if c.tune.Framerate > 0 {
+		settings["mjpegServerFramerate"] = c.tune.Framerate
+	}
+	if c.tune.Quality > 0 {
+		settings["mjpegServerScreenshotQuality"] = c.tune.Quality
+	}
+	if c.tune.Scale > 0 {
+		settings["mjpegScalingFactor"] = c.tune.Scale
+	}
+	return settings
 }
+
+// withSession runs fn against the device's WDA session. If WDA says the session
+// is gone (it restarted, or another client replaced it) the cached id is
+// dropped and fn runs once more against a fresh one.
+func (c *Controller) withSession(deviceID string, fn func(base, sid string) error) error {
+	ep, ok := c.endpoint(deviceID)
+	if !ok || ep.WDA == "" {
+		return fmt.Errorf("no ios screen endpoint for %q", deviceID)
+	}
+	base := "http://" + ep.WDA
+	for attempt := 0; ; attempt++ {
+		sid, err := c.session(deviceID, base)
+		if err != nil {
+			return err
+		}
+		err = fn(base, sid)
+		if err == nil || attempt > 0 || !isSessionGone(err) {
+			return err
+		}
+		c.dropSession(deviceID, sid)
+	}
+}
+
+func (c *Controller) dropSession(deviceID, sid string) {
+	c.mu.Lock()
+	if c.sessions[deviceID] == sid {
+		delete(c.sessions, deviceID)
+	}
+	c.mu.Unlock()
+}
+
+// errSessionGone marks a WDA reply that means the session id is no longer valid.
+var errSessionGone = errors.New("wda session gone")
+
+func isSessionGone(err error) bool { return errors.Is(err, errSessionGone) }
 
 func (c *Controller) post(u string, payload map[string]any) error {
 	var r io.Reader
@@ -344,6 +361,9 @@ func (c *Controller) post(u string, payload map[string]any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
+		if resp.StatusCode == http.StatusNotFound && bytes.Contains(b, []byte("invalid session id")) {
+			return fmt.Errorf("%w: %s", errSessionGone, b)
+		}
 		return fmt.Errorf("wda %s: %s: %s", u, resp.Status, b)
 	}
 	return nil
@@ -370,4 +390,17 @@ func ParseEndpoints(in map[string]Endpoint) map[string]Endpoint {
 		out[id] = ep
 	}
 	return out
+}
+
+// FrameCount reports how many frames the device's shared reader has published,
+// or false when nobody is watching the screen. Sampled once a second it gives
+// the live fps the page shows.
+func (c *Controller) FrameCount(deviceID string) (uint64, bool) {
+	c.mu.Lock()
+	s := c.streams[deviceID]
+	c.mu.Unlock()
+	if s == nil {
+		return 0, false
+	}
+	return s.frames(), true
 }

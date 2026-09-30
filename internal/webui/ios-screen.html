@@ -11,7 +11,14 @@
   <span class="title" id="title">iOS-экран</span>
   <span class="status" id="status"></span>
   <span class="sp"></span>
+  <span class="stats" id="stats" title="кадров в секунду · сколько устройство выполняло последнее действие"></span>
+  <button class="btn btn--sm" onclick="send({type:'back'})" title="свайп от левого края">Назад</button>
   <button class="btn btn--sm" onclick="send({type:'home'})">Домой</button>
+  <button class="btn btn--sm" onclick="send({type:'app_switcher'})">Приложения</button>
+  <button class="btn btn--sm" onclick="send({type:'volume_down'})" title="громкость −">Vol −</button>
+  <button class="btn btn--sm" onclick="send({type:'volume_up'})" title="громкость +">Vol +</button>
+  <button class="btn btn--sm" onclick="rotate()">Повернуть</button>
+  <button class="btn btn--sm" onclick="send({type:'lock'})">Заблокировать</button>
   <button class="btn btn--sm" onclick="send({type:'wake'})">Разбудить</button>
   <button class="btn btn--sm" id="restartBtn" onclick="restartAgent()">Перезапустить агент</button>
   <button class="btn btn--ghost btn--sm" onclick="location.reload()">Обновить</button>
@@ -191,25 +198,89 @@ function toDevice(ev) {
   return { x: Math.max(0, Math.min(dev.w, x)), y: Math.max(0, Math.min(dev.h, y)) };
 }
 
-async function send(action) {
+// ---- control channel -----------------------------------------------------
+// One WebSocket for every action: no request, cookie and CSRF round per tap.
+// If it cannot connect (an old proxy in the way), actions fall back to POST.
+let ws = null, wsReady = false, seq = 0;
+const sentAt = new Map();
+const statsEl = document.getElementById("stats");
+let lastFps = null, lastMs = null;
+function showStats() {
+  const parts = [];
+  if (lastFps != null) parts.push(lastFps + " fps");
+  if (lastMs != null) parts.push(lastMs + " мс");
+  statsEl.textContent = parts.join(" · ");
+}
+function connectControl() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const sock = new WebSocket(`${proto}//${location.host}${base}/control`);
+  sock.onopen = () => { ws = sock; wsReady = true; };
+  sock.onmessage = e => {
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (m.type === "stats") {
+      lastFps = m.fps ?? null;
+      showStats();
+    } else if (m.type === "ack") {
+      const t0 = sentAt.get(m.seq); sentAt.delete(m.seq);
+      if (t0) lastMs = Math.round(performance.now() - t0);
+      showStats();
+      document.getElementById("err").textContent = m.error || "";
+      afterAck(m);
+    }
+  };
+  sock.onclose = e => {
+    const was = wsReady;
+    ws = null; wsReady = false;
+    if (e.code === 4003) { document.getElementById("err").textContent = "бронь снята — управление отключено"; return; }
+    setTimeout(connectControl, was ? 500 : 3000);
+  };
+}
+const ackWaiters = new Map();
+function afterAck(m) { const f = ackWaiters.get(m.seq); if (f) { ackWaiters.delete(m.seq); f(m); } }
+
+function send(action) {
+  const n = ++seq;
+  sentAt.set(n, performance.now());
+  if (wsReady) {
+    ws.send(JSON.stringify({ ...action, seq: n }));
+    return new Promise(res => ackWaiters.set(n, res));
+  }
+  return sendPost(action, n);
+}
+async function sendPost(action, n) {
   try {
     const r = await fetch(base + "/input", {
       method: "POST", headers: { "Content-Type": "application/json", "X-Poligon-CSRF": csrf() },
       body: JSON.stringify(action),
     });
+    const t0 = sentAt.get(n); sentAt.delete(n);
+    if (t0) { lastMs = Math.round(performance.now() - t0); showStats(); }
     if (!r.ok) document.getElementById("err").textContent = (await r.json()).error || r.statusText;
     else document.getElementById("err").textContent = "";
   } catch (e) { document.getElementById("err").textContent = e.message; }
 }
 
+async function rotate() {
+  await send({ type: "rotate" });
+  // the frame and the point space both turn: re-read the size
+  try { const r = await fetch(base + "/size"); if (r.ok) dev = await r.json(); } catch {}
+}
+
+// ---- pointer --------------------------------------------------------------
+// A still press is a tap, or a long press when held; a drag replays its whole
+// trail (sampled every ~30ms) so a curve or a slow scroll behaves as drawn.
+// Alt+drag is a pinch around the press point: right/up zooms in.
 const dot = document.getElementById("dot");
-let down = null, last = null;
+let down = null;
+const HOLD_MS = 450;
 
 img.addEventListener("dragstart", e => e.preventDefault());
+img.addEventListener("contextmenu", e => e.preventDefault());
 img.addEventListener("pointerdown", e => {
   e.preventDefault();
-  down = { ...toDevice(e), t: Date.now(), cx: e.clientX, cy: e.clientY, moved: false };
-  last = { x: e.clientX, y: e.clientY, t: Date.now() };
+  const p = toDevice(e);
+  down = { ...p, t: performance.now(), cx: e.clientX, cy: e.clientY, moved: false,
+           pinch: e.altKey, trail: [[p.x, p.y, 0]], lastT: performance.now() };
   dot.style.left = e.clientX + "px"; dot.style.top = e.clientY + "px"; dot.style.opacity = 1;
   img.setPointerCapture(e.pointerId);
 });
@@ -218,42 +289,81 @@ img.addEventListener("pointermove", e => {
   e.preventDefault();
   dot.style.left = e.clientX + "px"; dot.style.top = e.clientY + "px";
   if (Math.hypot(e.clientX - down.cx, e.clientY - down.cy) > 6) down.moved = true;
-  last = { x: e.clientX, y: e.clientY, t: Date.now() };
+  const now = performance.now();
+  if (now - down.lastT >= 30) {
+    const p = toDevice(e);
+    down.trail.push([p.x, p.y, Math.round(now - down.lastT)]);
+    down.lastT = now;
+  }
 });
 img.addEventListener("pointerup", e => {
   if (!down) return;
   e.preventDefault();
   dot.style.opacity = 0;
+  const d = down; down = null;
   const up = toDevice(e);
-  if (!down.moved) { send({ type: "tap", x: up.x, y: up.y }); down = null; return; }
-  const held = (Date.now() - down.t) / 1000;
-  const duration = held > 0.6 ? 0.4 : 0.08;
-  send({ type: "swipe", x: down.x, y: down.y, x2: up.x, y2: up.y, duration });
-  down = null;
+  const held = performance.now() - d.t;
+  if (d.pinch) {
+    const dist = (e.clientX - d.cx) - (e.clientY - d.cy);
+    if (Math.abs(dist) > 6) send({ type: "pinch", x: d.x, y: d.y, scale: Math.max(0.2, Math.min(5, Math.exp(dist / 150))) });
+    return;
+  }
+  if (!d.moved) {
+    if (held >= HOLD_MS) send({ type: "hold", x: up.x, y: up.y, duration: Math.min(held / 1000, 5) });
+    else send({ type: "tap", x: up.x, y: up.y });
+    return;
+  }
+  d.trail.push([up.x, up.y, Math.max(16, Math.round(performance.now() - d.lastT))]);
+  // WDA replays the trail at its recorded pace; a fling needs to stay quick
+  send({ type: "path", points: d.trail });
 });
 img.addEventListener("pointercancel", () => { down = null; dot.style.opacity = 0; });
 
-let wheelAcc = 0, wheelTimer = null, wheelPt = null;
+let wheelAcc = 0, wheelTimer = null, wheelPt = null, pinchAcc = 0;
 img.addEventListener("wheel", e => {
   e.preventDefault();
   wheelPt = toDevice(e);
-  wheelAcc += e.deltaY;
+  // a trackpad pinch arrives as ctrl+wheel
+  if (e.ctrlKey) pinchAcc += e.deltaY; else wheelAcc += e.deltaY;
   clearTimeout(wheelTimer);
   wheelTimer = setTimeout(() => {
-    const amount = Math.max(-260, Math.min(260, wheelAcc));
-    const cx = wheelPt.x, cy = dev.h / 2;
-    send({ type: "swipe", x: cx, y: cy + amount / 2, x2: cx, y2: cy - amount / 2, duration: 0.1 });
-    wheelAcc = 0;
+    if (pinchAcc) {
+      send({ type: "pinch", x: wheelPt.x, y: wheelPt.y, scale: Math.max(0.3, Math.min(3, Math.exp(-pinchAcc / 100))) });
+      pinchAcc = 0;
+    }
+    if (wheelAcc) {
+      const amount = Math.max(-260, Math.min(260, wheelAcc));
+      const cx = wheelPt.x, cy = dev.h / 2;
+      send({ type: "swipe", x: cx, y: cy + amount / 2, x2: cx, y2: cy - amount / 2, duration: 0.1 });
+      wheelAcc = 0;
+    }
   }, 60);
 }, { passive: false });
 
+// ---- keyboard -------------------------------------------------------------
+// Typed characters are batched for a moment so a fast typist costs one WDA
+// call per burst, not per key. Paste (⌘V / Ctrl+V) types the clipboard text —
+// Cyrillic included, WDA types any Unicode.
+let typeBuf = "", typeTimer = null;
+function typeText(t) {
+  typeBuf += t;
+  clearTimeout(typeTimer);
+  typeTimer = setTimeout(() => { const b = typeBuf; typeBuf = ""; if (b) send({ type: "text", text: b }); }, 40);
+}
 addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key.length === 1) send({ type: "text", text: e.key });
-  else if (e.key === "Backspace") send({ type: "text", text: "\b" });
-  else if (e.key === "Enter") send({ type: "text", text: "\n" });
+  if (e.key.length === 1) typeText(e.key);
+  else if (e.key === "Backspace") typeText("\b");
+  else if (e.key === "Enter") typeText("\n");
+  else return;
+  e.preventDefault();
+});
+addEventListener("paste", e => {
+  const t = e.clipboardData && e.clipboardData.getData("text");
+  if (t) { e.preventDefault(); typeText(t); }
 });
 
+connectControl();
 init();
 </script>
 </body>

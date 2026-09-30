@@ -72,14 +72,7 @@ func (c *Controller) PressButton(deviceID, name string) error {
 
 // sessionPost POSTs to a path under the device's live WDA session.
 func (c *Controller) sessionPost(deviceID, path string, payload map[string]any) error {
-	ep, ok := c.endpoint(deviceID)
-	if !ok || ep.WDA == "" {
-		return fmt.Errorf("no ios screen endpoint for %q", deviceID)
-	}
-	base := "http://" + ep.WDA
-	sid, err := c.session(deviceID, base)
-	if err != nil {
-		return err
-	}
-	return c.post(fmt.Sprintf("%s/session/%s%s", base, sid, path), payload)
+	return c.withSession(deviceID, func(base, sid string) error {
+		return c.post(fmt.Sprintf("%s/session/%s%s", base, sid, path), payload)
+	})
 }

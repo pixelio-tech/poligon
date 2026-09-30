@@ -78,8 +78,10 @@ func (c *Capturer) OpenURL(ctx context.Context, dev model.Device, url string) er
 	return fmt.Errorf("open url unsupported on %s", dev.Platform)
 }
 
-// PressButton presses a named button on either platform: home everywhere,
-// volume keys everywhere, the rest (back, enter, power, …) Android only.
+// PressButton presses a named button on either platform. iOS has no back,
+// power or recents button, so those become their gestures / WDA equivalents:
+// back is a swipe in from the left edge, power locks, recents opens the app
+// switcher.
 func (c *Capturer) PressButton(ctx context.Context, dev model.Device, name string, androidCode int) error {
 	switch dev.Platform {
 	case model.Android:
@@ -99,8 +101,14 @@ func (c *Capturer) PressButton(ctx context.Context, dev model.Device, name strin
 			return c.ios.Do(dev.ID, iosscreen.Input{Type: "text", Text: "\n"})
 		case "wake":
 			return c.ios.Do(dev.ID, iosscreen.Input{Type: "wake"})
+		case "back":
+			return c.ios.Do(dev.ID, iosscreen.Input{Type: "back"})
+		case "power":
+			return c.ios.Do(dev.ID, iosscreen.Input{Type: "lock"})
+		case "recents":
+			return c.ios.Do(dev.ID, iosscreen.Input{Type: "app_switcher"})
 		}
-		return fmt.Errorf("key %q has no iOS equivalent (iOS has no back button — tap the app's own back control)", name)
+		return fmt.Errorf("key %q has no iOS equivalent", name)
 	}
 	return fmt.Errorf("keys unsupported on %s", dev.Platform)
 }
