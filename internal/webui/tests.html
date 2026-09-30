@@ -215,7 +215,8 @@ const TYPES = {
   maestro: {
     name: "Maestro",
     one: "Прогнать сценарии Maestro: тапы, ввод текста, проверки того, что на экране",
-    plats: ["android", "ios"],
+    plats: ["android"],
+    needs: "android",
     slots: () => [
       {
         key: "flow", field: "flow",
@@ -241,7 +242,7 @@ const TYPES = {
         hint: "KEY=VALUE по одной на строку, уходят в сценарий как -e. POLIGON_DEVICE_ID подставляется сам",
         placeholder: "PHONE=9525115368\nCODE=0000",
       },
-    ].concat(batchPlatforms().map(p => ({
+    ].concat(batchPlatforms().filter(p => p === "android").map(p => ({
       key: "build-" + p,
       field: "artifact",
       label: "Сборка для " + PLAT_NAME[p],
@@ -276,26 +277,35 @@ const TYPES = {
   integration_test: {
     name: "Integration test",
     one: "Прогнать ваши сценарии из integration_test — настоящие проверки, а не просто «запустилось»",
-    plats: ["android"],
-    needs: "android",
-    slots: () => [
-      {
-        key: "app", field: "artifact",
-        label: "APK приложения",
-        hint: "обычная сборка — build/app/outputs/…/app-debug.apk",
-        accept: ".apk", required: true,
-      },
-      {
-        key: "test", field: "test_artifact",
-        label: "APK с тестами (androidTest)",
-        hint: "сборка тестов — …-debug-androidTest.apk. Расширение то же, поэтому файла два",
-        accept: ".apk", required: true,
-      },
-    ],
+    plats: ["android", "ios"],
+    slots: () => {
+      const out = [];
+      if (batchPlatforms().includes("android")) out.push(
+        {
+          key: "app-android", field: "artifact",
+          label: "APK приложения",
+          hint: "обычная сборка — build/app/outputs/…/app-debug.apk",
+          accept: ".apk", required: true,
+        },
+        {
+          key: "test-android", field: "test_artifact",
+          label: "APK с тестами (androidTest)",
+          hint: "сборка тестов — …-debug-androidTest.apk. Расширение то же, поэтому файла два",
+          accept: ".apk", required: true,
+        });
+      if (batchPlatforms().includes("ios")) out.push({
+        key: "test-ios", field: "test_artifact",
+        label: "Тестовая сборка для iOS (.zip)",
+        hint: "папка Build/Products после xcodebuild build-for-testing, в zip. Приложение внутри, отдельный .ipa не нужен. Подписывать не надо — ферма переподпишет",
+        accept: ".zip", required: true,
+      });
+      return out;
+    },
     how: [
-      ["шаги", "установить оба APK, затем am instrument -w и разбор результата"],
-      ["итог", "пройден при OK, провален при FAILURES"],
-      ["файлы", "instrument.log, скриншот, logcat"],
+      ["шаги", "Android: установить оба APK, am instrument -w. iOS: переподписать, поставить заново, xcodebuild test-without-building"],
+      ["итог", "пройден — все тесты зелёные; провален — какой тест упал и почему"],
+      ["файлы", "Android: instrument.log. iOS: xcodebuild.log, test-summary.json, result.xcresult.zip. Плюс скриншот и лог устройства"],
+      ["iOS-сборка", "flutter build ios --config-only --release --no-codesign integration_test/app_test.dart, затем в ios/: xcodebuild build-for-testing -workspace Runner.xcworkspace -scheme Runner -xcconfig Flutter/Release.xcconfig -configuration Release -sdk iphoneos -derivedDataPath ../build/ios_integ CODE_SIGNING_ALLOWED=NO; zip -ry products.zip build/ios_integ/Build/Products. Xcode не новее фермы"],
     ],
   },
 };

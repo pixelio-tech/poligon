@@ -114,6 +114,36 @@ func (t Tools) Specs(ctx context.Context, udid string) (model.Specs, error) {
 // older phones, which devicectl does not serve, keep ios-deploy. When the OS
 // version is not known yet, devicectl is tried first and ios-deploy after.
 func (t Tools) Install(ctx context.Context, udid, osVersion, bundleID, appBundlePath string) (string, error) {
+	out, err := t.install(ctx, udid, osVersion, bundleID, appBundlePath)
+	if err == nil || bundleID == "" || !entitlementMismatch(out+err.Error()) {
+		return out, err
+	}
+	// The copy already on the phone was signed differently (older farm builds
+	// signed with a wildcard application-identifier); iOS will not upgrade
+	// across that. Remove it and install again — its data goes with it.
+	if uout, uerr := t.Uninstall(ctx, udid, osVersion, bundleID); uerr != nil {
+		return out + uout, fmt.Errorf("%w (and removing the installed copy failed: %v)", err, uerr)
+	}
+	out2, err2 := t.install(ctx, udid, osVersion, bundleID, appBundlePath)
+	return out + "\n--- reinstalled after removing the differently signed copy ---\n" + out2, err2
+}
+
+// entitlementMismatch spots iOS refusing to upgrade an app whose signing
+// identity changed.
+func entitlementMismatch(s string) bool {
+	return strings.Contains(s, "does not match that of the installed application") ||
+		strings.Contains(s, "MismatchedApplicationIdentifierEntitlement")
+}
+
+// Uninstall removes an app by bundle id.
+func (t Tools) Uninstall(ctx context.Context, udid, osVersion, bundleID string) (string, error) {
+	if osMajor(osVersion) >= 17 {
+		return run(ctx, "xcrun", "devicectl", "device", "uninstall", "app", "--device", udid, bundleID)
+	}
+	return run(ctx, t.IOSDeploy, "--id", udid, "--uninstall_only", "--bundle_id", bundleID, "--no-wifi")
+}
+
+func (t Tools) install(ctx context.Context, udid, osVersion, bundleID, appBundlePath string) (string, error) {
 	switch major := osMajor(osVersion); {
 	case major >= 17:
 		return t.installCoreDevice(ctx, udid, bundleID, appBundlePath)

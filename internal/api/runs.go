@@ -156,9 +156,9 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	spec.TestArtifacts = map[model.Platform]string{}
 	if multipart {
 		for _, hdr := range r.MultipartForm.File["test_artifact"] {
-			plat := platformForExt(hdr.Filename)
+			plat := testPlatformForExt(hdr.Filename)
 			if plat == "" {
-				fail(w, http.StatusBadRequest, errors.New("unsupported test artifact "+hdr.Filename))
+				fail(w, http.StatusBadRequest, errors.New("unsupported test artifact "+hdr.Filename+" (want an androidTest .apk, or for iOS the zipped Build/Products of xcodebuild build-for-testing)"))
 				return
 			}
 			if _, dup := spec.TestArtifacts[plat]; dup {
@@ -178,9 +178,9 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		if q := strings.IndexAny(base, "?#"); q >= 0 {
 			base = base[:q]
 		}
-		plat := platformForExt(base)
+		plat := testPlatformForExt(base)
 		if plat == "" {
-			fail(w, http.StatusBadRequest, errors.New("test_artifact_url must end in .apk/.aab/.apks/.ipa"))
+			fail(w, http.StatusBadRequest, errors.New("test_artifact_url must end in .apk (androidTest) or .zip (iOS Build/Products)"))
 			return
 		}
 		if _, dup := spec.TestArtifacts[plat]; dup {
@@ -257,11 +257,13 @@ func checkRunSpec(typ string, spec model.RunSpec) error {
 			return errors.New("command run needs command=")
 		}
 	case "integration_test":
-		if len(spec.Artifacts) == 0 {
-			return errors.New("integration_test needs the app build (artifact or artifact_url)")
-		}
+		// Android: the app apk + its androidTest apk. iOS: one zip of
+		// build-for-testing products, which carries the app inside it.
 		if len(spec.TestArtifacts) == 0 {
-			return errors.New("integration_test needs the androidTest build (test_artifact or test_artifact_url)")
+			return errors.New("integration_test needs the test build (test_artifact or test_artifact_url): an androidTest .apk, or for iOS the zipped Build/Products of xcodebuild build-for-testing")
+		}
+		if _, ok := spec.TestArtifacts[model.Android]; ok && spec.Artifacts[model.Android] == "" {
+			return errors.New("integration_test on Android needs the app apk too (artifact or artifact_url)")
 		}
 	}
 	return nil

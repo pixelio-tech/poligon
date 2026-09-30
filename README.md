@@ -17,13 +17,16 @@ Done:
 - live screens: ws-scrcpy for Android, WebDriverAgent for iOS, one grid for a batch
 - per-device diagnostics: screenshot + logcat from the grid (`internal/capture`)
 - **build library** (`internal/builds`): every build installed onto a farm phone — dashboard, batch, MCP agent or test run — is kept once per sha256 under `<storage_dir>/builds/` (hard-linked from the upload, no extra disk), with who uploaded it, when, how, the app's package / name / version / build number / min OS, and every install since (device, model, OS, user, result). `/builds.html` lists, searches, downloads, notes and reinstalls them onto devices you hold; agents use `list_builds` + `install_app build_id=`
-- **test runs** (`internal/runner`): `install_smoke` (install → launch → assert alive + no crash), `maestro` (run a `.yaml` flow, collect report + recording; Maestro's driver apps stay on the phone between runs — `--no-reinstall-driver` — and are cleared only when the host's Maestro version changes), `command` (generic escape hatch — appium etc.), `integration_test` (Android: install the app + its androidTest apk, run the instrumentation). Per-device artifacts under `<storage_dir>/runs/<id>/<device>/`, results at `/runs.html` (status/type filters, paged)
+- **test runs** (`internal/runner`): `install_smoke` (install → launch → assert alive + no crash), `maestro` (run a `.yaml` flow, collect report + recording; Maestro's driver apps stay on the phone between runs — `--no-reinstall-driver` — and are cleared only when the host's Maestro version changes), `command` (generic escape hatch — appium etc.), `integration_test` (Android: install the app + its androidTest apk, run the instrumentation; iOS: re-sign a zipped `build-for-testing` output and run it with `xcodebuild test-without-building`). Per-device artifacts under `<storage_dir>/runs/<id>/<device>/`, results at `/runs.html` (status/type filters, paged)
 - **live debugging from VS Code** (`internal/adbtunnel`, Android): exposes the host's adb server on the network automatically while any Android device is reserved, so `flutter run -d <serial>` / VS Code attaches to a farm device directly — hot reload, breakpoints, not just install-and-collect. One-time setup, then reserve+open VS Code is all it takes. See "VS Code / live debugging" below.
 
 - **coding agents over MCP** (`/mcp`): Claude Code / Codex drive the farm themselves — reserve a phone, install a build, screenshot + UI tree, tap / swipe / type / keys / deep links, logs, adb shell, Maestro runs. See "Agents (MCP)" below.
 
-Next:
-- iOS `integration_test` — needs a `.xctestrun` bundle + `xcodebuild test-without-building`, and Xcode on the host
+iOS `integration_test` runs `xcodebuild test-without-building` on the host
+(go-ios cannot: it launches app-hosted test bundles without injecting XCTest)
+and reports per test from the `.xcresult`, quoting Flutter's own failure
+message. Artifacts: `xcodebuild.log`, `test-summary.json`,
+`result.xcresult.zip`, screenshot, syslog.
 
 ### Agents (MCP)
 
@@ -108,6 +111,19 @@ curl -sX POST https://farm/api/runs -H "Authorization: Bearer plgn_…" \
 curl -sX POST https://farm/api/runs -H "Authorization: Bearer plgn_…" \
   -F type=integration_test -F platform=android -F count=1 \
   -F artifact=@app-debug.apk -F test_artifact=@app-debug-androidTest.apk
+
+# Flutter integration_test (iOS): one zip of the build-for-testing products —
+# the app is inside, no .ipa. Needs ios/RunnerTests/RunnerTests.m with
+# `@import integration_test; INTEGRATION_TEST_IOS_RUNNER(RunnerTests)`.
+# No signing needed: the farm re-signs. Build with an Xcode no newer than the
+# farm's (it refuses newer builds up front — their XCTest cannot load).
+flutter build ios --config-only --release --no-codesign integration_test/app_test.dart
+(cd ios && xcodebuild build-for-testing -workspace Runner.xcworkspace -scheme Runner \
+  -xcconfig Flutter/Release.xcconfig -configuration Release -sdk iphoneos \
+  -derivedDataPath ../build/ios_integ CODE_SIGNING_ALLOWED=NO)
+(cd build/ios_integ/Build && zip -qry ../../../ios-tests.zip Products -x '*.dSYM/*')
+curl -sX POST https://farm/api/runs -H "Authorization: Bearer plgn_…" \
+  -F type=integration_test -F platform=ios -F count=1 -F test_artifact=@ios-tests.zip
 
 # poll: GET /api/runs/{id} → {status: queued|running|passed|failed|error|canceled, devices:[…]}
 ```

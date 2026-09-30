@@ -147,7 +147,7 @@ type startRunIn struct {
 	Count        int               `json:"count,omitempty" jsonschema:"how many free devices to pick, default 1"`
 	Tag          string            `json:"tag,omitempty"`
 	App          []string          `json:"app,omitempty" jsonschema:"app build(s): upload ids (u_…) or http(s) URLs, one per platform"`
-	TestApp      []string          `json:"test_app,omitempty" jsonschema:"integration_test: the androidTest apk, upload id or URL"`
+	TestApp      []string          `json:"test_app,omitempty" jsonschema:"integration_test: the androidTest apk, and/or for iOS a .zip of the Build/Products folder from xcodebuild build-for-testing (the app is inside it); upload id or URL"`
 	FlowYAML     string            `json:"flow_yaml,omitempty" jsonschema:"maestro: the flow itself, inline YAML (appId header, ---, commands)"`
 	Flow         string            `json:"flow,omitempty" jsonschema:"maestro: upload id or URL of a .yaml or a zipped .maestro workspace (instead of flow_yaml)"`
 	FlowPath     string            `json:"flow_path,omitempty" jsonschema:"maestro: flow to run inside a zipped workspace"`
@@ -785,14 +785,20 @@ func (s *Server) toolStartRun(ctx context.Context, _ *mcp.CallToolRequest, in st
 		IncludeTags: in.IncludeTags, ExcludeTags: in.ExcludeTags, Command: in.Command,
 		WatchSeconds: in.WatchSeconds, TimeoutSeconds: in.TimeoutS,
 	}
-	builds := func(refs []string, into map[model.Platform]string) error {
+	builds := func(refs []string, into map[model.Platform]string, test bool) error {
 		for _, ref := range refs {
 			p, err := s.resolveBuild(ctx, user, ref, dir)
 			if err != nil {
 				return err
 			}
 			plat := platformForExt(p)
+			if test {
+				plat = testPlatformForExt(p)
+			}
 			if plat == "" {
+				if test {
+					return fmt.Errorf("%s: want an androidTest .apk, or a .zip of iOS Build/Products", filepath.Base(p))
+				}
 				return fmt.Errorf("%s: not a .apk/.aab/.apks/.ipa", filepath.Base(p))
 			}
 			if _, dup := into[plat]; dup {
@@ -802,10 +808,10 @@ func (s *Server) toolStartRun(ctx context.Context, _ *mcp.CallToolRequest, in st
 		}
 		return nil
 	}
-	if err := builds(in.App, spec.Artifacts); err != nil {
+	if err := builds(in.App, spec.Artifacts, false); err != nil {
 		return nil, nil, err
 	}
-	if err := builds(in.TestApp, spec.TestArtifacts); err != nil {
+	if err := builds(in.TestApp, spec.TestArtifacts, true); err != nil {
 		return nil, nil, err
 	}
 

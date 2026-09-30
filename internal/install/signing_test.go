@@ -79,3 +79,16 @@ func TestProfileSelection(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 }
+
+func TestConcreteEntitlements(t *testing.T) {
+	in := []byte(`<dict><key>application-identifier</key><string>T3B5G56RNZ.*</string>` +
+		`<key>keychain-access-groups</key><array><string>T3B5G56RNZ.*</string><string>com.apple.token</string></array>` +
+		`<key>get-task-allow</key><true/></dict>`)
+	got := string(concreteEntitlements(in, "dev.poligon.itestDemo"))
+	want := `<dict><key>application-identifier</key><string>T3B5G56RNZ.dev.poligon.itestDemo</string>` +
+		`<key>keychain-access-groups</key><array><string>T3B5G56RNZ.dev.poligon.itestDemo</string><string>com.apple.token</string></array>` +
+		`<key>get-task-allow</key><true/></dict>`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}

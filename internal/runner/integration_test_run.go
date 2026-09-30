@@ -19,13 +19,10 @@ import (
 // connectedAndroidTest` would — the farm doesn't build, so both apks arrive
 // pre-built as run artifacts.
 //
-// iOS needs a .xctestrun bundle + `xcodebuild test-without-building` instead
-// of an apk; that's a large enough departure (and needs Xcode on the host)
-// that it isn't implemented yet — iOS devices are skipped for now.
+// iOS takes an XCTest build instead — see runIntegrationTestIOS.
 func (r *Runner) runIntegrationTest(ctx context.Context, run model.Run, dev model.Device, rd *model.RunDevice, devDir string) {
-	if dev.Platform != model.Android {
-		rd.Status, rd.Detail = model.RunSkipped,
-			"integration_test supports Android only for now (iOS needs a .xctestrun bundle + xcodebuild test-without-building)"
+	if dev.Platform == model.IOS {
+		r.runIntegrationTestIOS(ctx, run, dev, rd, devDir)
 		return
 	}
 	appArt := run.Spec.Artifacts[dev.Platform]

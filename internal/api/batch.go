@@ -31,6 +31,19 @@ func platformForExt(name string) model.Platform {
 	return ""
 }
 
+// testPlatformForExt maps an integration_test test build to its platform: an
+// androidTest .apk, or for iOS the zipped Build/Products of
+// `xcodebuild build-for-testing`.
+func testPlatformForExt(name string) model.Platform {
+	if strings.EqualFold(filepath.Ext(name), ".zip") {
+		return model.IOS
+	}
+	if p := platformForExt(name); p == model.Android {
+		return p
+	}
+	return ""
+}
+
 // saveUpload streams one multipart file into dir, keeping its base name.
 func saveUpload(hdr *multipart.FileHeader, dir string) (string, error) {
 	src, err := hdr.Open()

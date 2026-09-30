@@ -7,9 +7,11 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -160,15 +162,6 @@ func (in *Installer) expandAAB(ctx context.Context, aab string) ([]string, error
 // <bundle-id>.mobileprovision or a wildcard profile (app-id ending ".*") whose
 // team matches. Frameworks are signed before the app, extensions before the app.
 func (in *Installer) resignIPA(ctx context.Context, ipa, udid string) (string, error) {
-	ident, err := ResolveIdentity(ctx, in.opts.SigningIdentity)
-	if err != nil {
-		return "", fmt.Errorf("iOS re-signing: %w", err)
-	}
-	dirs := append([]string{in.opts.ProfileDir}, in.opts.ExtraProfileDirs...)
-	profiles, err := loadProfiles(dirs, ident.Hash, udid, time.Now())
-	if err != nil {
-		return "", fmt.Errorf("iOS re-signing with %s: %w", ident.Name, err)
-	}
 	work, err := os.MkdirTemp(in.opts.WorkDir, "resign-*")
 	if err != nil {
 		return "", err
@@ -187,27 +180,58 @@ func (in *Installer) resignIPA(ctx context.Context, ipa, udid string) (string, e
 	if appDir == "" {
 		return "", fmt.Errorf("no .app in ipa")
 	}
-
-	// sign deepest-first: frameworks, plugins, then the app
-	var targets []string
-	for _, sub := range []string{"Frameworks", "PlugIns"} {
-		d := filepath.Join(appDir, sub)
-		entries, _ := os.ReadDir(d)
-		for _, e := range entries {
-			if e.IsDir() && (strings.HasSuffix(e.Name(), ".framework") ||
-				strings.HasSuffix(e.Name(), ".appex") || strings.HasSuffix(e.Name(), ".dylib")) {
-				targets = append(targets, filepath.Join(d, e.Name()))
-			}
-		}
-	}
-	targets = append(targets, appDir)
-
-	for _, t := range targets {
-		if err := in.codesignBundle(ctx, t, ident.Hash, profiles, work); err != nil {
-			return "", err
-		}
+	if err := in.resignApp(ctx, appDir, udid, work); err != nil {
+		return "", err
 	}
 	return appDir, nil
+}
+
+// resignApp re-signs an extracted .app in place with the farm identity and a
+// profile covering udid. work is a scratch dir for entitlement files.
+func (in *Installer) resignApp(ctx context.Context, appDir, udid, work string) error {
+	ident, err := ResolveIdentity(ctx, in.opts.SigningIdentity)
+	if err != nil {
+		return fmt.Errorf("iOS re-signing: %w", err)
+	}
+	dirs := append([]string{in.opts.ProfileDir}, in.opts.ExtraProfileDirs...)
+	profiles, err := loadProfiles(dirs, ident.Hash, udid, time.Now())
+	if err != nil {
+		return fmt.Errorf("iOS re-signing with %s: %w", ident.Name, err)
+	}
+	for _, t := range signTargets(appDir) {
+		if err := in.codesignBundle(ctx, t, ident.Hash, profiles, work); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// signTargets lists what to sign inside an app, deepest first: frameworks,
+// then plug-ins (app extensions, and the .xctest bundle of a test build, each
+// after its own frameworks), then the app itself.
+func signTargets(appDir string) []string {
+	nested := func(dir string) []string {
+		var out []string
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			n := e.Name()
+			if strings.HasSuffix(n, ".framework") || strings.HasSuffix(n, ".dylib") {
+				out = append(out, filepath.Join(dir, n))
+			}
+		}
+		return out
+	}
+	targets := nested(filepath.Join(appDir, "Frameworks"))
+	entries, _ := os.ReadDir(filepath.Join(appDir, "PlugIns"))
+	for _, e := range entries {
+		n := e.Name()
+		if strings.HasSuffix(n, ".appex") || strings.HasSuffix(n, ".xctest") {
+			p := filepath.Join(appDir, "PlugIns", n)
+			targets = append(targets, nested(filepath.Join(p, "Frameworks"))...)
+			targets = append(targets, p)
+		}
+	}
+	return append(targets, appDir)
 }
 
 // codesignBundle embeds the right profile (for bundles that need one) and
@@ -216,7 +240,10 @@ func (in *Installer) codesignBundle(ctx context.Context, bundle, identity string
 	id := bundleID(filepath.Join(bundle, "Info.plist"))
 
 	args := []string{"-f", "-s", identity}
-	isFramework := strings.HasSuffix(bundle, ".framework") || strings.HasSuffix(bundle, ".dylib")
+	// frameworks, dylibs and test bundles carry no profile or entitlements of
+	// their own: they run inside the app that loads them
+	isFramework := strings.HasSuffix(bundle, ".framework") || strings.HasSuffix(bundle, ".dylib") ||
+		strings.HasSuffix(bundle, ".xctest")
 	if !isFramework {
 		p, ok := matchProfile(profiles, id)
 		if !ok {
@@ -226,7 +253,7 @@ func (in *Installer) codesignBundle(ctx context.Context, bundle, identity string
 			return err
 		}
 		ents := filepath.Join(work, strings.ReplaceAll(id, "/", "_")+".plist")
-		if err := os.WriteFile(ents, p.entitlements, 0o644); err != nil {
+		if err := os.WriteFile(ents, concreteEntitlements(p.entitlements, id), 0o644); err != nil {
 			return err
 		}
 		args = append(args, "--entitlements", ents)
@@ -237,6 +264,22 @@ func (in *Installer) codesignBundle(ctx context.Context, bundle, identity string
 		return fmt.Errorf("codesign %s: %v: %s", filepath.Base(bundle), err, strings.TrimSpace(string(b)))
 	}
 	return nil
+}
+
+// wildcardID is a team wildcard app id inside an entitlements plist.
+var wildcardID = regexp.MustCompile(`<string>([A-Z0-9]{10})\.\*</string>`)
+
+// concreteEntitlements turns a wildcard profile's entitlements into the ones
+// for one app, the way Xcode does: application-identifier (and the keychain
+// group) "TEAM.*" become "TEAM.<bundle id>". Signed with the wildcard as is,
+// iOS installs the app but does not treat it as properly development-signed —
+// for one, it drops DYLD_* from its environment, which is how XCTest gets
+// injected into a test host.
+func concreteEntitlements(ents []byte, bundleID string) []byte {
+	if bundleID == "" {
+		return ents
+	}
+	return wildcardID.ReplaceAll(ents, []byte("<string>${1}."+bundleID+"</string>"))
 }
 
 // matchProfile prefers an exact app-id match, else a team wildcard.
@@ -366,11 +409,15 @@ func unzipDir(zipPath, prefix, dstRoot string) error {
 		return err
 	}
 	defer zr.Close()
+	root := filepath.Clean(dstRoot) + string(os.PathSeparator)
 	for _, f := range zr.File {
 		if !strings.HasPrefix(f.Name, prefix) {
 			continue
 		}
-		target := filepath.Join(dstRoot, filepath.Clean(f.Name))
+		target := filepath.Join(dstRoot, filepath.Clean("/"+f.Name))
+		if !strings.HasPrefix(target+string(os.PathSeparator), root) {
+			return fmt.Errorf("zip entry %q points outside the archive", f.Name)
+		}
 		if f.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return err
@@ -384,7 +431,24 @@ func unzipDir(zipPath, prefix, dstRoot string) error {
 		if err != nil {
 			return err
 		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode())
+		// frameworks built by Xcode may carry symlinks (zip -y keeps them)
+		if f.Mode()&os.ModeSymlink != 0 {
+			link, err := io.ReadAll(io.LimitReader(rc, 4096))
+			rc.Close()
+			if err != nil {
+				return err
+			}
+			dest := filepath.Join(filepath.Dir(target), string(link))
+			if filepath.IsAbs(string(link)) || !strings.HasPrefix(dest+string(os.PathSeparator), root) {
+				return fmt.Errorf("zip entry %q links outside the archive", f.Name)
+			}
+			_ = os.Remove(target)
+			if err := os.Symlink(string(link), target); err != nil {
+				return err
+			}
+			continue
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode().Perm())
 		if err != nil {
 			rc.Close()
 			return err
