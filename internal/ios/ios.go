@@ -107,8 +107,69 @@ func (t Tools) Specs(ctx context.Context, udid string) (model.Specs, error) {
 }
 
 // Install deploys a (re-signed) .app bundle to the device and launches it.
-func (t Tools) Install(ctx context.Context, udid, appBundlePath string) (string, error) {
+//
+// iOS 17 moved developer services behind CoreDevice: there is no
+// DeveloperDiskImage to mount any more, so ios-deploy fails on those phones
+// ("could not find DeveloperDiskImage"). They go through Xcode's devicectl;
+// older phones, which devicectl does not serve, keep ios-deploy. When the OS
+// version is not known yet, devicectl is tried first and ios-deploy after.
+func (t Tools) Install(ctx context.Context, udid, osVersion, bundleID, appBundlePath string) (string, error) {
+	switch major := osMajor(osVersion); {
+	case major >= 17:
+		return t.installCoreDevice(ctx, udid, bundleID, appBundlePath)
+	case major > 0:
+		return t.installLegacy(ctx, udid, appBundlePath)
+	}
+	out, err := t.installCoreDevice(ctx, udid, bundleID, appBundlePath)
+	if err == nil {
+		return out, nil
+	}
+	lout, lerr := t.installLegacy(ctx, udid, appBundlePath)
+	if lerr != nil {
+		return lout, fmt.Errorf("devicectl: %v; ios-deploy: %w", err, lerr)
+	}
+	return lout, nil
+}
+
+func (t Tools) installLegacy(ctx context.Context, udid, appBundlePath string) (string, error) {
 	return run(ctx, t.IOSDeploy, "--id", udid, "--bundle", appBundlePath, "--justlaunch", "--no-wifi")
+}
+
+// installCoreDevice installs with `xcrun devicectl` and launches the app.
+func (t Tools) installCoreDevice(ctx context.Context, udid, bundleID, appBundlePath string) (string, error) {
+	// a paired phone often sits with its CoreDevice tunnel down; asking for
+	// its details brings the tunnel up before the install needs it
+	wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	_, _ = run(wctx, "xcrun", "devicectl", "device", "info", "details", "--device", udid, "--quiet")
+	cancel()
+
+	out, err := run(ctx, "xcrun", "devicectl", "device", "install", "app", "--device", udid, appBundlePath)
+	if err != nil {
+		return out, err
+	}
+	if bundleID == "" {
+		return out, nil
+	}
+	lout, lerr := run(ctx, "xcrun", "devicectl", "device", "process", "launch",
+		"--device", udid, "--terminate-existing", bundleID)
+	if lerr != nil {
+		// installed is what was asked for; a locked phone refuses the launch
+		return out + lout + "\nlaunch failed (is the phone locked?): " + lerr.Error(), nil
+	}
+	return out + lout, nil
+}
+
+// osMajor is the major number of an iOS version string ("26.3" -> 26), 0 if
+// unknown.
+func osMajor(v string) int {
+	n := 0
+	for _, c := range strings.TrimSpace(v) {
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
 }
 
 // SyslogCommand builds (but does not start) a continuous `idevicesyslog`.

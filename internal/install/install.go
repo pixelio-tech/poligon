@@ -121,7 +121,7 @@ func (in *Installer) run(ctx context.Context, dev model.Device, artifactPath str
 			return Result{}, err
 		}
 		pkg := bundleID(filepath.Join(appBundle, "Info.plist"))
-		out, err := in.ios.Install(ctx, dev.UDID, appBundle)
+		out, err := in.ios.Install(ctx, dev.UDID, dev.Specs.OSVersion, pkg, appBundle)
 		return Result{Output: out, Package: pkg}, err
 
 	default:

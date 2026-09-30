@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -45,12 +44,6 @@ func (r *Runner) runMaestro(ctx context.Context, run model.Run, dev model.Device
 	}
 
 	target := dev.Serial
-	if dev.Platform == model.IOS {
-		target = dev.UDID
-		if err := wakeCoreDevice(ctx, dev.UDID); err != nil {
-			r.log.Warn("maestro: could not bring up the CoreDevice tunnel", "device", dev.ID, "err", err)
-		}
-	}
 	report := filepath.Join(devDir, "report.xml")
 	debug := filepath.Join(devDir, "maestro")
 
@@ -177,31 +170,15 @@ func driverInstallRefused(out []byte) bool {
 }
 
 // maestroUnsupported explains up front why Maestro cannot drive a device,
-// instead of its own "Device … was requested, but it is not connected".
-// Maestro finds physical iPhones through CoreDevice (`xcrun devicectl`),
-// which only knows iOS 17 and later.
+// instead of failing a minute later inside Maestro's driver build. Every
+// iPhone on the farm is a physical one, and Maestro only drives simulators.
 func maestroUnsupported(dev model.Device) string {
 	if dev.Platform != model.IOS {
 		return ""
 	}
-	major, _ := strconv.Atoi(strings.SplitN(dev.Specs.OSVersion, ".", 2)[0])
-	if major > 0 && major < 17 {
-		return fmt.Sprintf("Maestro cannot run on this iPhone: it finds physical iPhones through CoreDevice (xcrun devicectl), which supports iOS 17+, and %s is on iOS %s. Drive it through the MCP tools (tap, type_text, ui_tree) or use an iPhone on iOS 17+.",
-			dev.ID, dev.Specs.OSVersion)
-	}
-	return ""
-}
-
-// wakeCoreDevice brings up the device's CoreDevice tunnel. Maestro lists
-// physical iPhones with `xcrun devicectl` and treats one whose tunnel is idle
-// ("disconnected" — the normal state between uses) as not connected at all;
-// asking devicectl for the device's details connects the tunnel.
-func wakeCoreDevice(ctx context.Context, udid string) error {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "xcrun", "devicectl", "device", "info", "details", "--device", udid).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, tail(string(out), 300))
-	}
-	return nil
+	return fmt.Sprintf("Maestro cannot run on a physical iPhone (%s). Upstream does not support real iOS devices: "+
+		"2.10 has to build its on-device driver and ships the Xcode project without the MaestroDriverLib sources "+
+		"(\"Build input file cannot be found: MaestroDriverLib/Info.plist\", mobile-dev-inc/maestro#3608, closed as unsupported), "+
+		"and 2.11 refuses physical iPhones outright. Use install_smoke, or drive the phone through the MCP tools (tap, type_text, ui_tree, wait_for).",
+		dev.ID)
 }

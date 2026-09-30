@@ -112,18 +112,14 @@ func TestMaestroArgs(t *testing.T) {
 	}
 }
 
-func TestMaestroUnsupportedOldIOS(t *testing.T) {
-	old := model.Device{ID: "apple-iphone8-1", Platform: model.IOS, Specs: model.Specs{OSVersion: "15.8.5"}}
-	if why := maestroUnsupported(old); !strings.Contains(why, "iOS 17+") {
-		t.Fatalf("iOS 15: %q", why)
-	}
-	for _, d := range []model.Device{
-		{Platform: model.IOS, Specs: model.Specs{OSVersion: "26.3"}},
-		{Platform: model.IOS}, // unknown version: let Maestro decide
-		{Platform: model.Android, Specs: model.Specs{OSVersion: "10"}},
-	} {
-		if why := maestroUnsupported(d); why != "" {
-			t.Fatalf("%+v: %q", d, why)
+func TestMaestroRefusesPhysicalIPhones(t *testing.T) {
+	for _, v := range []string{"15.8.5", "26.3", ""} {
+		d := model.Device{ID: "iphone", Platform: model.IOS, Specs: model.Specs{OSVersion: v}}
+		if why := maestroUnsupported(d); !strings.Contains(why, "physical iPhone") {
+			t.Fatalf("iOS %q: %q", v, why)
 		}
+	}
+	if why := maestroUnsupported(model.Device{Platform: model.Android, Specs: model.Specs{OSVersion: "10"}}); why != "" {
+		t.Fatalf("android: %q", why)
 	}
 }
