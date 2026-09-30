@@ -13,7 +13,7 @@ Done:
 - hardware specs per device (model, SoC, RAM, screen, battery, OS)
 - auth: open self-service signup (email + password), server-side sessions, no admin role; personal API tokens for scripts / CI
 - reservations: one holder per device, heartbeat lease, idle + hard-cap auto-release; multi-device batches
-- manual install via dashboard / API: apk direct, aab via bundletool, ipa re-signed with farm profiles then `ios-deploy`; mixed Android+iOS batches take one artifact per platform
+- manual install via dashboard / API: apk direct, aab via bundletool, ipa re-signed with farm profiles then `xcrun devicectl` (iOS 17+) or `ios-deploy` (older); mixed Android+iOS batches take one artifact per platform
 - live screens: ws-scrcpy for Android, WebDriverAgent for iOS, one grid for a batch
 - per-device diagnostics: screenshot + logcat from the grid (`internal/capture`)
 - **build library** (`internal/builds`): every build installed onto a farm phone — dashboard, batch, MCP agent or test run — is kept once per sha256 under `<storage_dir>/builds/` (hard-linked from the upload, no extra disk), with who uploaded it, when, how, the app's package / name / version / build number / min OS, and every install since (device, model, OS, user, result). `/builds.html` lists, searches, downloads, notes and reinstalls them onto devices you hold; agents use `list_builds` + `install_app build_id=`
@@ -289,7 +289,7 @@ internal/config    devices.yaml loader
 internal/store     sqlite (schema.sql embedded)
 internal/model     domain types
 internal/adb       adb wrapper (list, specs, install)
-internal/ios       libimobiledevice + ios-deploy wrapper
+internal/ios       libimobiledevice, devicectl + ios-deploy wrapper
 internal/devices   poll loop, flap detection, specs refresh
 internal/reserve   booking, leases, auto-release
 internal/auth      users + bearer tokens

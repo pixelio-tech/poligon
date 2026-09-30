@@ -38,6 +38,15 @@
         ],
         "createdAt": "2026-09-25T04:40:17.373Z",
         "reason": "Claude: head scale (14px h1 / 12.5px body) matches runs.html and vscode-setup.html in the shared app.css system"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "internal/webui/builds.html"
+        ],
+        "createdAt": "2026-09-30T07:53:47.499Z",
+        "reason": "Claude: only hit is .segs, a segmented-control track (2px inset around buttons with their own 10px padding), same component as runs.html"
       }
     ]
   }
