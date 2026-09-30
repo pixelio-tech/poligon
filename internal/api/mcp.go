@@ -38,7 +38,8 @@ const mcpInstructions = `Poligon is a farm of real Android and iOS phones. Typic
 1. list_devices → reserve_device (you hold it until release_device; the lease renews while you keep calling tools, and lapses after ~15 min of silence).
 2. Get the build onto the farm: install_app with url= (http/https), or upload a local file first with
    curl -sF file=@path/to/app.apk -H "Authorization: Bearer $POLIGON_TOKEN" <farm>/api/uploads
-   and pass the returned upload_id.
+   and pass the returned upload_id. Every build ever installed on the farm stays there: list_builds finds
+   one (by app, version, uploader) and install_app build_id= reinstalls it with no upload.
 3. launch_app → screenshot / ui_tree to see the screen → tap / type_text / swipe / press_key → wait_for to let the UI settle.
    Prefer tap by text or id (from ui_tree) over raw coordinates. Coordinates are always in the screenshot's image space.
 4. get_logs for crashes (logcat on Android, syslog on iOS); shell for adb shell one-liners (Android).

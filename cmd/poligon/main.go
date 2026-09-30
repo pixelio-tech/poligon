@@ -19,6 +19,7 @@ import (
 	"github.com/pancir/poligon/internal/adb"
 	"github.com/pancir/poligon/internal/api"
 	"github.com/pancir/poligon/internal/auth"
+	"github.com/pancir/poligon/internal/builds"
 	"github.com/pancir/poligon/internal/capture"
 	"github.com/pancir/poligon/internal/config"
 	"github.com/pancir/poligon/internal/devices"
@@ -101,6 +102,8 @@ func serve(log *slog.Logger, cfgPath string, devFlag bool) error {
 		ExtraProfileDirs: install.XcodeProfileDirs(),
 		WorkDir:          os.TempDir(),
 	})
+	lib := builds.New(st, cfg.StorageDir, log)
+	inst.SetRecorder(lib)
 	devUser := os.Getenv("POLIGON_DEV_USER")
 	a := auth.New(st, auth.Options{
 		SessionTTL:  cfg.Auth.SessionTTL,
@@ -129,6 +132,7 @@ func serve(log *slog.Logger, cfgPath string, devFlag bool) error {
 	run := runner.New(st, res, inst, capt, adb.New(cfg.ADBPath), iosCtl,
 		filepath.Join(cfg.StorageDir, "runs"), os.Getenv("POLIGON_MAESTRO"), log)
 	srv := api.New(cfg, st, res, inst, lp, iosCtl, prov, capt, run, http.FS(webui.FS()), log)
+	srv.SetLibrary(lib)
 	handler := srv.Handler(a)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

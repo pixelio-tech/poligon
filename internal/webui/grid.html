@@ -243,6 +243,7 @@ function cell(d, url) {
   c.innerHTML = `
     <div class="tile-rail">
       <button class="icon-btn" title="Установить сборку" aria-label="Установить сборку" onclick="pickInstallFor('${d.id}')">${icon.install}</button>
+      <button class="icon-btn" title="Поставить сборку из хранилища" aria-label="Поставить сборку из хранилища" onclick="openModal('builds-${d.id}','Сборки → ${d.id}','/builds.html?device=${encodeURIComponent(d.id)}')">${icon.apps}</button>
       <button class="icon-btn" title="Перезапустить экран" aria-label="Перезапустить экран" onclick="restartOne('${d.id}')">${icon.restart}</button>
       <button class="icon-btn" title="Обновить" aria-label="Обновить" onclick="reopen('${d.id}')">${icon.swap}</button>
       <button class="icon-btn" title="Скриншот" aria-label="Скриншот" onclick="window.open('/api/devices/${d.id}/screenshot','_blank')">${icon.cam}</button>

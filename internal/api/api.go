@@ -18,6 +18,7 @@ import (
 
 	"github.com/pancir/poligon/internal/adbfilter"
 	"github.com/pancir/poligon/internal/auth"
+	"github.com/pancir/poligon/internal/builds"
 	"github.com/pancir/poligon/internal/capture"
 	"github.com/pancir/poligon/internal/config"
 	"github.com/pancir/poligon/internal/install"
@@ -46,6 +47,7 @@ type Server struct {
 	log  *slog.Logger
 	web  http.FileSystem
 
+	lib       *builds.Library // nil: build library off
 	adbFilter *adbfilter.Manager
 	agent     *agentState // MCP-side caches; set by Handler
 }
@@ -57,6 +59,9 @@ func New(cfg config.Config, st *store.Store, res *reserve.Manager, inst *install
 		adbFilter: adbfilter.New(cfg.ADBServerAddr),
 	}
 }
+
+// SetLibrary turns on the build library routes.
+func (s *Server) SetLibrary(l *builds.Library) { s.lib = l }
 
 // Handler returns the root http.Handler with auth applied to /api.
 func (s *Server) Handler(a *auth.Auth) http.Handler {
@@ -102,6 +107,12 @@ func (s *Server) Handler(a *auth.Auth) http.Handler {
 	api.HandleFunc("POST /devices/{id}/settings", s.deviceOpenSettings)
 	api.HandleFunc("GET /debug-tunnel/info", s.deviceDebugTunnelInfo)
 	api.HandleFunc("POST /uploads", s.createUpload)
+	api.HandleFunc("GET /builds", s.listBuilds)
+	api.HandleFunc("GET /builds/{id}", s.getBuild)
+	api.HandleFunc("GET /builds/{id}/download", s.downloadBuild)
+	api.HandleFunc("PATCH /builds/{id}", s.patchBuild)
+	api.HandleFunc("DELETE /builds/{id}", s.deleteBuild)
+	api.HandleFunc("POST /builds/{id}/install", s.installBuild)
 	api.HandleFunc("GET /tokens", s.listTokens)
 	api.HandleFunc("POST /tokens", s.createToken)
 	api.HandleFunc("DELETE /tokens/{prefix}", s.revokeToken)
@@ -537,7 +548,8 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	_ = s.st.SetDeviceStatus(id, model.StatusBusy, time.Now())
-	result, ierr := s.inst.Run(ctx, dev, artifactPath)
+	result, ierr := s.inst.Run(ctx, dev, artifactPath,
+		install.Origin{User: u.Name, Via: "web", Name: hdr.Filename})
 
 	status, detail := "ok", result.Output
 	code := http.StatusOK

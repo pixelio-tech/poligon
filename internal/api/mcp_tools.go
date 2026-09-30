@@ -11,12 +11,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/image/draw"
 
+	"github.com/pancir/poligon/internal/install"
 	"github.com/pancir/poligon/internal/model"
 	"github.com/pancir/poligon/internal/runner"
 	"github.com/pancir/poligon/internal/store"
@@ -51,6 +53,13 @@ type installIn struct {
 	DeviceID string `json:"device_id" jsonschema:"a device you hold"`
 	UploadID string `json:"upload_id,omitempty" jsonschema:"id from POST /api/uploads (a local .apk/.aab/.apks/.ipa you uploaded)"`
 	URL      string `json:"url,omitempty" jsonschema:"http(s) URL of the build; used when upload_id is empty"`
+	BuildID  string `json:"build_id,omitempty" jsonschema:"id from list_builds (b_123): a build already on the farm, no upload needed"`
+}
+
+type listBuildsIn struct {
+	Query    string `json:"query,omitempty" jsonschema:"match file name, package, app name, version, uploader or note"`
+	Platform string `json:"platform,omitempty" jsonschema:"android or ios"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"max rows (default 20)"`
 }
 
 type pkgIn struct {
@@ -180,7 +189,8 @@ func (s *Server) addMCPTools(srv *mcp.Server) {
 	mcp.AddTool(srv, add("reserve_device", "Reserve a phone for yourself (a specific one, or the first free by platform/tag). Required before any other device tool. Wakes the screen."), s.toolReserve)
 	mcp.AddTool(srv, add("release_device", "Give a reserved phone back to the pool. Always do this when finished."), s.toolRelease)
 
-	mcp.AddTool(srv, add("install_app", "Install a build (.apk/.aab/.apks on Android, .ipa on iOS) on a phone you hold, by upload_id or URL. Can take a few minutes."), s.toolInstall)
+	mcp.AddTool(srv, add("install_app", "Install a build (.apk/.aab/.apks on Android, .ipa on iOS) on a phone you hold, by build_id (from list_builds), upload_id or URL. Can take a few minutes."), s.toolInstall)
+	mcp.AddTool(srv, ro(add("list_builds", "Builds already installed on the farm by anyone, newest first: id, app, version, who uploaded it and when. Reinstall one with install_app build_id.")), s.toolListBuilds)
 	mcp.AddTool(srv, ro(add("list_apps", "List installed packages (Android).")), s.toolListApps)
 	mcp.AddTool(srv, add("launch_app", "Start an app by Android package or iOS bundle id."), s.toolLaunch)
 	mcp.AddTool(srv, add("stop_app", "Force-stop (Android) / terminate (iOS) an app."), s.toolStop)
@@ -328,16 +338,28 @@ func (s *Server) toolInstall(ctx context.Context, _ *mcp.CallToolRequest, in ins
 		return nil, nil, err
 	}
 	user, _ := agentUser(ctx)
-	ref := in.UploadID
-	if ref == "" {
-		ref = in.URL
-	}
-	if ref == "" {
-		return nil, nil, errors.New("pass upload_id or url")
-	}
-	path, err := s.resolveBuild(ctx, user, ref, s.newUploadDir(dev.ID))
-	if err != nil {
-		return nil, nil, err
+	origin := install.Origin{User: user, Via: "mcp", URL: in.URL}
+	var path string
+	if in.BuildID != "" {
+		b, err := s.libraryBuild(in.BuildID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if path, err = s.lib.File(b); err != nil {
+			return nil, nil, err
+		}
+		origin.URL, origin.Ref, origin.Name = "", "b_"+strconv.FormatInt(b.ID, 10), b.Filename
+	} else {
+		ref := in.UploadID
+		if ref == "" {
+			ref = in.URL
+		}
+		if ref == "" {
+			return nil, nil, errors.New("pass build_id, upload_id or url")
+		}
+		if path, err = s.resolveBuild(ctx, user, ref, s.newUploadDir(dev.ID)); err != nil {
+			return nil, nil, err
+		}
 	}
 	if p := platformForExt(path); p != dev.Platform {
 		return nil, nil, fmt.Errorf("%s is not a %s build (.apk/.aab/.apks for Android, .ipa for iOS)", filepath.Base(path), dev.Platform)
@@ -345,7 +367,7 @@ func (s *Server) toolInstall(ctx context.Context, _ *mcp.CallToolRequest, in ins
 	ictx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	_ = s.st.SetDeviceStatus(dev.ID, model.StatusBusy, time.Now())
-	res, err := s.inst.Run(ictx, dev, path)
+	res, err := s.inst.Run(ictx, dev, path, origin)
 	s.log.Info("install", "device", dev.ID, "user", user, "artifact", filepath.Base(path), "via", "mcp", "ok", err == nil)
 	s.agentBeat(dev.ID, user)
 	if err != nil {
@@ -1011,6 +1033,56 @@ func (s *Server) toolListRuns(ctx context.Context, _ *mcp.CallToolRequest, in li
 		}
 		fmt.Fprintf(&b, "%s  %s  %s  %s  %s\n", r.ID, r.Type, r.Status,
 			r.CreatedAt.Format("2006-01-02 15:04"), strings.Join(devs, ","))
+	}
+	return text("%s", b.String()), nil, nil
+}
+
+// libraryBuild resolves a build id ("b_123" or "123") to a live library build.
+func (s *Server) libraryBuild(ref string) (model.Build, error) {
+	if s.lib == nil {
+		return model.Build{}, errors.New("build library is off on this farm")
+	}
+	id, err := strconv.ParseInt(strings.TrimPrefix(ref, "b_"), 10, 64)
+	if err != nil {
+		return model.Build{}, fmt.Errorf("bad build_id %q (want b_123, from list_builds)", ref)
+	}
+	b, err := s.st.Build(id)
+	if err != nil || b.DeletedAt != nil {
+		return model.Build{}, fmt.Errorf("build %s not found", ref)
+	}
+	return b, nil
+}
+
+func (s *Server) toolListBuilds(ctx context.Context, _ *mcp.CallToolRequest, in listBuildsIn) (*mcp.CallToolResult, any, error) {
+	if s.lib == nil {
+		return nil, nil, errors.New("build library is off on this farm")
+	}
+	if in.Limit <= 0 {
+		in.Limit = 20
+	}
+	list, err := s.st.ListBuilds(store.BuildFilter{Q: in.Query, Platform: in.Platform, Limit: in.Limit})
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(list) == 0 {
+		return text("no builds match"), nil, nil
+	}
+	var b strings.Builder
+	for _, x := range list {
+		app := x.Package
+		if x.AppName != "" {
+			app = x.AppName + " (" + x.Package + ")"
+		}
+		ver := x.Version
+		if x.BuildCode != "" {
+			ver += " (" + x.BuildCode + ")"
+		}
+		fmt.Fprintf(&b, "b_%d  %s  %s  %s  %s — uploaded by %s %s, installed %d×",
+			x.ID, x.Platform, x.Filename, app, ver, x.UploadedBy, x.UploadedAt.Format("2006-01-02 15:04"), x.Installs)
+		if x.Note != "" {
+			fmt.Fprintf(&b, " — note: %s", x.Note)
+		}
+		b.WriteString("\n")
 	}
 	return text("%s", b.String()), nil, nil
 }

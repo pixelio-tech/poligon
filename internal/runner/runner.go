@@ -386,7 +386,7 @@ func (r *Runner) smoke(ctx context.Context, run model.Run, dev model.Device, rd 
 
 	_ = r.cap.ClearLogs(ctx, dev)
 
-	res, ierr := r.inst.Run(ctx, dev, art)
+	res, ierr := r.inst.Run(ctx, dev, art, runOrigin(run))
 	rd.Package = res.Package
 	if ierr != nil {
 		rd.Status, rd.Detail = model.RunError, "install failed: "+ierr.Error()
@@ -471,4 +471,10 @@ func newID() string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// runOrigin tags a run's installs in the build library with who started the
+// run and which run it was.
+func runOrigin(run model.Run) install.Origin {
+	return install.Origin{User: run.User, Via: "run", Ref: run.ID}
 }

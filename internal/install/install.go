@@ -42,7 +42,28 @@ type Installer struct {
 	adb  *adb.ADB
 	ios  ios.Tools
 	opts Options
+	rec  Recorder
 }
+
+// Origin says who asked for an install and through which door.
+type Origin struct {
+	User string
+	Via  string // web | batch | mcp | run
+	Ref  string // run id or batch id, when there is one
+	// Name is the file name the user uploaded, when the stored path differs.
+	Name string
+	URL  string // where the build was fetched from, if it came from a URL
+}
+
+// Recorder keeps every build that reaches a phone and every install of it.
+// Add runs before the install, so a build that fails to install is kept too.
+type Recorder interface {
+	Add(path string, o Origin) (buildID int64, err error)
+	Installed(buildID int64, dev model.Device, o Origin, res Result, err error)
+}
+
+// SetRecorder makes every Run keep the build and log the install.
+func (in *Installer) SetRecorder(r Recorder) { in.rec = r }
 
 // New builds an Installer.
 func New(a *adb.ADB, it ios.Tools, opts Options) *Installer {
@@ -57,8 +78,21 @@ type Result struct {
 }
 
 // Run installs artifactPath (as uploaded, keeping its extension) onto dev,
-// then launches the app.
-func (in *Installer) Run(ctx context.Context, dev model.Device, artifactPath string) (Result, error) {
+// then launches the app. With a Recorder set the build is kept in the build
+// library and the install logged, whatever the outcome.
+func (in *Installer) Run(ctx context.Context, dev model.Device, artifactPath string, o Origin) (Result, error) {
+	if in.rec == nil {
+		return in.run(ctx, dev, artifactPath)
+	}
+	id, rerr := in.rec.Add(artifactPath, o)
+	res, err := in.run(ctx, dev, artifactPath)
+	if rerr == nil {
+		in.rec.Installed(id, dev, o, res, err)
+	}
+	return res, err
+}
+
+func (in *Installer) run(ctx context.Context, dev model.Device, artifactPath string) (Result, error) {
 	ext := strings.ToLower(filepath.Ext(artifactPath))
 	switch {
 	case dev.Platform == model.Android && ext == ".apk":

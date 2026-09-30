@@ -136,3 +136,45 @@ CREATE TABLE IF NOT EXISTS adb_tunnel_ports (
     port       INTEGER NOT NULL UNIQUE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- every app build that has been installed onto a farm phone, from any path
+-- (dashboard, batch, MCP agent, test run). One row per distinct file (sha256);
+-- the file itself lives at <StorageDir>/<path>. uploaded_* describe the first
+-- time it arrived; build_installs records every install since.
+CREATE TABLE IF NOT EXISTS builds (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha256       TEXT NOT NULL UNIQUE,
+    filename     TEXT NOT NULL,
+    platform     TEXT NOT NULL,              -- android | ios
+    format       TEXT NOT NULL,              -- apk | aab | apks | ipa
+    size         INTEGER NOT NULL,
+    package      TEXT NOT NULL DEFAULT '',   -- android package / iOS bundle id
+    app_name     TEXT NOT NULL DEFAULT '',
+    version      TEXT NOT NULL DEFAULT '',   -- versionName / CFBundleShortVersionString
+    build_code   TEXT NOT NULL DEFAULT '',   -- versionCode / CFBundleVersion
+    min_os       TEXT NOT NULL DEFAULT '',   -- minSdkVersion / MinimumOSVersion
+    path         TEXT NOT NULL,              -- relative to the storage dir
+    uploaded_by  TEXT NOT NULL,
+    uploaded_at  TIMESTAMP NOT NULL,
+    via          TEXT NOT NULL DEFAULT '',   -- web | batch | mcp | run
+    source_url   TEXT NOT NULL DEFAULT '',   -- when fetched from a URL
+    note         TEXT NOT NULL DEFAULT '',
+    deleted_at   TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_builds_uploaded ON builds(uploaded_at);
+
+-- no foreign key to devices: history outlives a device being removed
+CREATE TABLE IF NOT EXISTS build_installs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    build_id     INTEGER NOT NULL REFERENCES builds(id) ON DELETE CASCADE,
+    device_id    TEXT NOT NULL,
+    device_model TEXT NOT NULL DEFAULT '',
+    os_version   TEXT NOT NULL DEFAULT '',
+    user         TEXT NOT NULL,
+    via          TEXT NOT NULL DEFAULT '',
+    ref          TEXT NOT NULL DEFAULT '',   -- run id or batch id it belonged to
+    status       TEXT NOT NULL,              -- ok | failed
+    detail       TEXT NOT NULL DEFAULT '',
+    created_at   TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_build_installs_build ON build_installs(build_id, created_at);

@@ -196,3 +196,47 @@ func (run Run) Redacted() Run {
 	}
 	return run
 }
+
+// Build is one app file that has been installed onto a farm phone. Identical
+// files (same sha256) are one Build, however many times they were uploaded.
+type Build struct {
+	ID         int64      `json:"id"`
+	SHA256     string     `json:"sha256"`
+	Filename   string     `json:"filename"`
+	Platform   Platform   `json:"platform"`
+	Format     string     `json:"format"`
+	Size       int64      `json:"size"`
+	Package    string     `json:"package,omitempty"`
+	AppName    string     `json:"app_name,omitempty"`
+	Version    string     `json:"version,omitempty"`
+	BuildCode  string     `json:"build_code,omitempty"`
+	MinOS      string     `json:"min_os,omitempty"`
+	Path       string     `json:"-"`
+	UploadedBy string     `json:"uploaded_by"`
+	UploadedAt time.Time  `json:"uploaded_at"`
+	Via        string     `json:"via,omitempty"`
+	SourceURL  string     `json:"source_url,omitempty"`
+	Note       string     `json:"note,omitempty"`
+	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
+
+	// summary of build_installs, filled by list queries
+	Installs      int        `json:"installs"`
+	InstallsOK    int        `json:"installs_ok"`
+	LastInstalled *time.Time `json:"last_installed_at,omitempty"`
+	Devices       int        `json:"devices"`
+}
+
+// BuildInstall is one install of a Build onto a device.
+type BuildInstall struct {
+	ID          int64     `json:"id"`
+	BuildID     int64     `json:"build_id"`
+	DeviceID    string    `json:"device_id"`
+	DeviceModel string    `json:"device_model,omitempty"`
+	OSVersion   string    `json:"os_version,omitempty"`
+	User        string    `json:"user"`
+	Via         string    `json:"via,omitempty"`
+	Ref         string    `json:"ref,omitempty"`
+	Status      string    `json:"status"`
+	Detail      string    `json:"detail,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}

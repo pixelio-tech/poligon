@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>сборки</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js"></script>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+  .head { flex: none; padding: 12px 14px 10px; border-bottom: 1px solid var(--line); }
+  .head-row { display: flex; align-items: center; gap: 10px; }
+  .head h1 { margin: 0; font: 600 14px/1.3 var(--sans); color: var(--text); }
+  .head .sp { margin-left: auto; }
+  .head .sub { margin-top: 3px; font: 400 12px/1.45 var(--sans); color: var(--text-muted); }
+
+  .toolbar {
+    flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 9px 14px; background: var(--surface-2); border-bottom: 1px solid var(--line);
+  }
+  .segs { display: inline-flex; gap: 2px; padding: 2px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-sm); }
+  .seg {
+    appearance: none; border: 1px solid transparent; background: transparent; cursor: pointer;
+    padding: 0 10px; height: 24px; border-radius: var(--r-xs);
+    font: 500 11.5px/1 var(--sans); color: var(--text-3); white-space: nowrap;
+  }
+  .seg:hover { color: var(--text); }
+  .seg[aria-pressed="true"] { background: var(--surface); color: var(--text); border-color: var(--line-2); }
+  .toolbar .search { flex: 1 1 180px; min-width: 140px; height: 28px; }
+  .target { font: 400 11.5px/1.4 var(--sans); color: var(--text-muted); }
+  .target b { font: 500 11.5px/1.4 var(--mono); color: var(--text-2); }
+
+  .list { flex: 1; overflow: auto; padding: 8px 14px 32px; }
+
+  .build {
+    margin-bottom: 6px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden;
+  }
+  .build-top {
+    display: flex; align-items: flex-start; gap: 10px;
+    width: 100%; padding: 10px 11px; cursor: pointer;
+    background: none; border: 0; text-align: left; font: inherit; color: inherit;
+  }
+  .build-top:hover { background: var(--surface-2); }
+
+  .plat {
+    flex: none; width: 30px; height: 30px; margin-top: 1px; border-radius: var(--r-sm);
+    display: grid; place-items: center;
+    font: 700 9.5px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase;
+    background: var(--inset); border: 1px solid var(--line-2); color: var(--text-2);
+  }
+  .plat.android { color: var(--ok); border-color: rgba(63,185,138,.35); }
+  .plat.ios { color: var(--text); }
+
+  .build-body { flex: 1; min-width: 0; }
+  .line1 { display: flex; align-items: baseline; gap: 8px; }
+  .app { font: 600 12.5px/1.35 var(--sans); color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ver { flex: none; font: 500 11.5px/1.35 var(--mono); color: var(--text-2); }
+  .when { margin-left: auto; flex: none; font: 400 11px/1.4 var(--mono); color: var(--text-muted); }
+  .line2 { margin-top: 3px; font: 400 11.5px/1.5 var(--sans); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .line2 .mono { font-family: var(--mono); font-size: 11px; }
+  .line2 .bad { color: var(--down); }
+  .note-line { margin-top: 4px; font: 400 11.5px/1.5 var(--sans); color: var(--text-2); white-space: pre-wrap; word-break: break-word; }
+
+  .detail { border-top: 1px solid var(--line); padding: 10px 11px; }
+  .facts { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; font: 400 11.5px/1.5 var(--sans); }
+  .facts dt { color: var(--text-muted); }
+  .facts dd { margin: 0; color: var(--text-2); min-width: 0; word-break: break-all; }
+  .facts dd.mono { font: 400 11px/1.5 var(--mono); }
+  .actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+
+  .chip {
+    appearance: none; display: inline-flex; align-items: center; gap: 5px;
+    height: 23px; padding: 0 8px; cursor: pointer;
+    font: 500 11px/1 var(--sans); color: var(--text-2);
+    background: var(--inset); border: 1px solid var(--line-2); border-radius: var(--r-xs);
+    text-decoration: none;
+  }
+  .chip:hover { color: var(--text); border-color: var(--line-strong); background: var(--surface-2); }
+  .chip:disabled { opacity: .5; cursor: default; }
+  .chip.is-primary { color: var(--text); border-color: var(--line-strong); }
+  .chip.is-danger { color: var(--down); border-color: rgba(229,84,75,.3); }
+  .chip.is-danger:hover { background: rgba(229,84,75,.12); color: var(--down); }
+
+  .hist-title { margin: 14px 0 6px; font: 600 10px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--text-muted); }
+  .hist { width: 100%; border-collapse: collapse; font: 400 11.5px/1.45 var(--sans); }
+  .hist td { padding: 5px 8px 5px 0; border-top: 1px solid var(--line); vertical-align: top; color: var(--text-2); }
+  .hist td.mono { font: 400 11px/1.45 var(--mono); }
+  .hist td.muted { color: var(--text-muted); }
+  .hist .why { color: var(--down); font: 400 11px/1.45 var(--mono); word-break: break-word; }
+  .ok { color: var(--ok); }
+  .fail { color: var(--down); }
+
+  .more { display: flex; justify-content: center; padding: 10px 0 4px; }
+  .empty { padding: 40px 20px; text-align: center; color: var(--text-muted); font: 400 12.5px/1.65 var(--sans); }
+  .empty .big { font: 600 13px/1.4 var(--sans); color: var(--text-2); margin-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <div class="head-row">
+    <h1>Сборки</h1>
+    <span class="sp"></span>
+    <a class="btn btn--sm" id="backLink" href="/" hidden>← Ферма</a>
+  </div>
+  <div class="sub" id="sub">Всё, что ставили на телефоны фермы — любым способом и любым пользователем.</div>
+</div>
+
+<div class="toolbar">
+  <div class="segs" role="group" aria-label="Платформа">
+    <button class="seg" id="seg-all"     aria-pressed="true"  onclick="setPlatform('')">Все</button>
+    <button class="seg" id="seg-android" aria-pressed="false" onclick="setPlatform('android')">Android</button>
+    <button class="seg" id="seg-ios"     aria-pressed="false" onclick="setPlatform('ios')">iOS</button>
+  </div>
+  <div class="segs" role="group" aria-label="Чьи">
+    <button class="seg" id="own-all"  aria-pressed="true"  onclick="setOwn(false)">Все</button>
+    <button class="seg" id="own-mine" aria-pressed="false" onclick="setOwn(true)">Загруженные мной</button>
+  </div>
+  <input class="input search" id="q" type="search" placeholder="Приложение, пакет, версия, файл, кто загрузил…" oninput="onSearch()">
+  <span class="target" id="target"></span>
+</div>
+
+<div class="page-error" id="err"></div>
+<div class="list" id="list"></div>
+
+<script>
+if (window.parent === window) document.getElementById("backLink").hidden = false;
+
+// opened from a device tile ("из хранилища"): install goes to that device
+const qp = new URLSearchParams(location.search);
+const forDevice = qp.get("device") || "";
+
+let me = "", platform = "", own = false, query = "", searchTimer = null;
+let builds = [], cursorEnd = false;
+let held = [];                // devices this user holds: [{id, platform}]
+const opened = new Set();
+const details = new Map();    // build id -> {build, installs}
+
+const VIA = { web: "дашборд", batch: "батч", mcp: "агент (MCP)", run: "прогон", library: "из хранилища" };
+const PLAT = { android: "Android", ios: "iOS" };
+
+function fmtSize(n) {
+  if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + " ГБ";
+  if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " МБ";
+  if (n >= 1 << 10) return Math.round(n / (1 << 10)) + " КБ";
+  return n + " Б";
+}
+function fmtWhen(s) {
+  if (!s) return "";
+  const d = new Date(s), now = new Date();
+  const hm = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return "сегодня " + hm;
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return "вчера " + hm;
+  return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" }) + " " + hm;
+}
+function verText(b) {
+  if (!b.version && !b.build_code) return "";
+  return (b.version || "") + (b.build_code ? ` (${b.build_code})` : "");
+}
+
+function setPlatform(p) {
+  platform = p;
+  for (const k of ["all", "android", "ios"]) document.getElementById("seg-" + k).setAttribute("aria-pressed", String((k === "all" ? "" : k) === p));
+  reload();
+}
+function setOwn(v) {
+  own = v;
+  document.getElementById("own-all").setAttribute("aria-pressed", String(!v));
+  document.getElementById("own-mine").setAttribute("aria-pressed", String(v));
+  reload();
+}
+function onSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { query = document.getElementById("q").value.trim(); reload(); }, 250);
+}
+
+async function fetchPage(before) {
+  const p = new URLSearchParams({ limit: 40 });
+  if (platform) p.set("platform", platform);
+  if (query) p.set("q", query);
+  if (own && me) p.set("user", me);
+  if (before) p.set("before", before);
+  const r = await fetch("/api/builds?" + p);
+  const b = await r.json();
+  if (!r.ok) throw new Error(b.error || r.statusText);
+  return b;
+}
+
+async function reload() {
+  try {
+    const b = await fetchPage(0);
+    builds = b.builds || [];
+    cursorEnd = builds.length < 40;
+    document.getElementById("err").textContent = "";
+    document.getElementById("sub").textContent = b.total
+      ? `${b.total} ${plural(b.total, "сборка", "сборки", "сборок")} · ${fmtSize(b.total_bytes)} на ферме. Попадают сюда сами — при установке на телефон.`
+      : "Всё, что ставили на телефоны фермы — любым способом и любым пользователем.";
+    render();
+  } catch (e) { document.getElementById("err").textContent = e.message; }
+}
+async function more() {
+  try {
+    const b = await fetchPage(builds[builds.length - 1].id);
+    builds = builds.concat(b.builds || []);
+    cursorEnd = (b.builds || []).length < 40;
+    render();
+  } catch (e) { toast(e.message, "err"); }
+}
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+
+function render() {
+  const list = document.getElementById("list");
+  if (!builds.length) {
+    list.innerHTML = `<div class="empty"><div class="big">${query || own || platform ? "Ничего не нашлось" : "Сборок пока нет"}</div>
+      Сборка появляется здесь, как только её поставят на любой телефон фермы:<br>
+      с дашборда, батчем, агентом по MCP или в прогоне.</div>`;
+    return;
+  }
+  list.innerHTML = builds.map(renderBuild).join("") +
+    (cursorEnd ? "" : `<div class="more"><button class="btn btn--sm" onclick="more()">Показать ещё</button></div>`);
+}
+
+function renderBuild(b) {
+  const app = b.app_name || b.package || b.filename;
+  const sub = [];
+  if (b.app_name && b.package) sub.push(`<span class="mono">${esc(b.package)}</span>`);
+  sub.push(`загрузил ${esc(b.uploaded_by)}` + (b.via ? ` · ${esc(VIA[b.via] || b.via)}` : ""));
+  sub.push(b.installs
+    ? `${b.installs} ${plural(b.installs, "установка", "установки", "установок")} на ${b.devices} ${plural(b.devices, "устройство", "устройства", "устройств")}` +
+      (b.installs_ok < b.installs ? ` · <span class="bad">${b.installs - b.installs_ok} неудачн.</span>` : "")
+    : "ещё не ставилась");
+  const isOpen = opened.has(b.id);
+  return `<div class="build" id="b-${b.id}">
+    <button class="build-top" onclick="toggle(${b.id})" aria-expanded="${isOpen}">
+      <span class="plat ${esc(b.platform)}">${b.platform === "ios" ? "iOS" : "APK"}</span>
+      <span class="build-body">
+        <span class="line1"><span class="app">${esc(app)}</span><span class="ver">${esc(verText(b))}</span>
+          <span class="when" title="${esc(new Date(b.uploaded_at).toLocaleString("ru-RU"))}">${esc(fmtWhen(b.uploaded_at))}</span></span>
+        <span class="line2" style="display:block">${sub.join(" · ")}</span>
+        ${b.note ? `<span class="note-line" style="display:block">${esc(b.note)}</span>` : ""}
+      </span>
+    </button>
+    ${isOpen ? `<div class="detail" id="d-${b.id}">${renderDetail(b)}</div>` : ""}
+  </div>`;
+}
+
+function renderDetail(b) {
+  const d = details.get(b.id);
+  const facts = [
+    ["Файл", `${esc(b.filename)} · ${fmtSize(b.size)} · .${esc(b.format)}`],
+    ["Платформа", esc(PLAT[b.platform] || b.platform) + (b.min_os ? ` · от ${esc(b.min_os)}` : "")],
+  ];
+  if (b.package) facts.push(["Пакет", `<span class="mono">${esc(b.package)}</span>`]);
+  if (b.version || b.build_code) facts.push(["Версия", esc(b.version || "—") + (b.build_code ? ` · сборка ${esc(b.build_code)}` : "")]);
+  facts.push(["Загрузил", `${esc(b.uploaded_by)} · ${esc(new Date(b.uploaded_at).toLocaleString("ru-RU"))} · ${esc(VIA[b.via] || b.via || "—")}`]);
+  if (b.source_url) facts.push(["Откуда", `<span class="mono">${esc(b.source_url)}</span>`]);
+  facts.push(["SHA-256", `<span class="mono">${esc(b.sha256)}</span>`]);
+
+  const targets = held.filter(h => h.platform === b.platform && (!forDevice || h.id === forDevice));
+  const installBtn = targets.length
+    ? `<button class="chip is-primary" onclick="installTo(${b.id})">Установить на ${targets.length === 1 ? esc(targets[0].id) : targets.length + " " + plural(targets.length, "устройство", "устройства", "устройств")}</button>`
+    : `<button class="chip" disabled title="Забронируйте ${esc(PLAT[b.platform] || "")}-устройство, чтобы поставить на него эту сборку">Установить — нет ${esc(PLAT[b.platform] || "")}-устройств в брони</button>`;
+
+  let hist = `<div class="hist-title">Установки</div><div class="target">загрузка…</div>`;
+  if (d) {
+    hist = `<div class="hist-title">Установки · ${d.installs.length}</div>` + (d.installs.length
+      ? `<table class="hist"><tbody>${d.installs.map(i => `<tr>
+          <td class="${i.status === "ok" ? "ok" : "fail"}">${i.status === "ok" ? "✓" : "✕"}</td>
+          <td class="mono">${esc(i.device_id)}</td>
+          <td class="muted">${esc([i.device_model, i.os_version].filter(Boolean).join(" · "))}</td>
+          <td>${esc(i.user)}</td>
+          <td class="muted">${esc(VIA[i.via] || i.via || "")}${i.ref && i.via === "run" ? ` · <a href="/runs.html?r=${encodeURIComponent(i.ref)}" target="_blank">прогон</a>` : ""}</td>
+          <td class="muted mono" title="${esc(new Date(i.created_at).toLocaleString("ru-RU"))}">${esc(fmtWhen(i.created_at))}</td>
+        </tr>${i.status !== "ok" && i.detail ? `<tr><td></td><td colspan="5" class="why">${esc(i.detail.slice(0, 400))}</td></tr>` : ""}`).join("")}</tbody></table>`
+      : `<div class="target">Ни разу не ставилась.</div>`);
+  }
+  return `<dl class="facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+    <div class="actions">
+      ${installBtn}
+      <a class="chip" href="/api/builds/${b.id}/download" download>Скачать</a>
+      <button class="chip" onclick="editNote(${b.id})">${b.note ? "Изменить заметку" : "Добавить заметку"}</button>
+      <button class="chip" onclick="copyId(${b.id})" title="Для агента: install_app build_id=b_${b.id}">b_${b.id}</button>
+      ${b.uploaded_by === me ? `<button class="chip is-danger" onclick="removeBuild(${b.id})">Удалить</button>` : ""}
+    </div>
+    ${hist}`;
+}
+
+async function toggle(id) {
+  if (opened.has(id)) opened.delete(id); else opened.add(id);
+  render();
+  if (opened.has(id)) await loadDetail(id);
+}
+async function loadDetail(id) {
+  try {
+    const r = await fetch(`/api/builds/${id}`);
+    const b = await r.json();
+    if (!r.ok) throw new Error(b.error || r.statusText);
+    details.set(id, b);
+    const i = builds.findIndex(x => x.id === id);
+    if (i >= 0) builds[i] = b.build;
+    render();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function installTo(id) {
+  const b = builds.find(x => x.id === id);
+  const targets = held.filter(h => h.platform === b.platform && (!forDevice || h.id === forDevice)).map(h => h.id);
+  if (!targets.length) return;
+  toast(`Ставлю ${b.app_name || b.filename} на ${targets.join(", ")}…`);
+  try {
+    const r = await fetch(`/api/builds/${id}/install`, { method: "POST", headers: HJ(), body: JSON.stringify({ device_ids: targets }) });
+    const res = await r.json();
+    if (!r.ok && r.status !== 207) throw new Error(res.error || r.statusText);
+    for (const x of res.results || []) {
+      if (x.status === "ok") toast(`${x.device}: установлено`, "ok");
+      else toast(`${x.device}: ${x.detail || x.status}`, "err");
+    }
+  } catch (e) { toast(e.message, "err"); }
+  await loadDetail(id);
+}
+
+async function editNote(id) {
+  const b = builds.find(x => x.id === id);
+  const v = await promptDialog({
+    title: "Заметка к сборке", value: b.note || "", multiline: true, okText: "Сохранить",
+    hint: "Видна всем: ветка, что проверяли, известные баги… Пустая — удалить заметку.",
+  });
+  if (v === null && !b.note) return;
+  try {
+    const r = await fetch(`/api/builds/${id}`, { method: "PATCH", headers: HJ(), body: JSON.stringify({ note: v || "" }) });
+    const nb = await r.json();
+    if (!r.ok) throw new Error(nb.error || r.statusText);
+    const i = builds.findIndex(x => x.id === id);
+    if (i >= 0) builds[i] = { ...builds[i], note: nb.note || "" };
+    render();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function removeBuild(id) {
+  const b = builds.find(x => x.id === id);
+  const ok = await confirmDialog({
+    title: "Удалить сборку?", okText: "Удалить",
+    body: `${b.filename} исчезнет с фермы, скачать и поставить её отсюда будет нельзя. История установок останется.`,
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch(`/api/builds/${id}`, { method: "DELETE", headers: HW() });
+    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+    opened.delete(id);
+    reload();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function copyId(id) {
+  navigator.clipboard?.writeText(`b_${id}`).then(() => toast(`b_${id} скопирован`), () => {});
+}
+
+async function loadHeld() {
+  try {
+    const devs = await (await fetch("/api/devices")).json();
+    held = (devs || []).filter(d => d.reservation && d.reservation.user === me).map(d => ({ id: d.id, platform: d.platform }));
+  } catch { held = []; }
+  const t = document.getElementById("target");
+  if (forDevice) t.innerHTML = `Ставить на <b>${esc(forDevice)}</b>`;
+  else if (held.length) t.innerHTML = `В брони: <b>${held.map(h => esc(h.id)).join(", ")}</b>`;
+  else t.textContent = "";
+}
+
+fetch("/auth/me").then(r => r.ok ? r.json() : null).then(u => { me = (u && u.name) || ""; })
+  .finally(async () => { await loadHeld(); reload(); });
+</script>
+</body>
+</html>

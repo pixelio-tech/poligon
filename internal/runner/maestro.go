@@ -37,7 +37,7 @@ func (r *Runner) runMaestro(ctx context.Context, run model.Run, dev model.Device
 
 	if art := run.Spec.Artifacts[dev.Platform]; art != "" {
 		_ = r.cap.ClearLogs(ctx, dev)
-		if _, ierr := r.inst.Run(ctx, dev, art); ierr != nil {
+		if _, ierr := r.inst.Run(ctx, dev, art, runOrigin(run)); ierr != nil {
 			rd.Status, rd.Detail = model.RunError, "install failed: "+ierr.Error()
 			r.saveLog(ctx, dev, rd, devDir)
 			return

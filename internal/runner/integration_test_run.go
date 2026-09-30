@@ -45,7 +45,7 @@ func (r *Runner) runIntegrationTest(ctx context.Context, run model.Run, dev mode
 
 	_ = r.cap.ClearLogs(ctx, dev)
 
-	res, ierr := r.inst.Run(ctx, dev, appArt)
+	res, ierr := r.inst.Run(ctx, dev, appArt, runOrigin(run))
 	rd.Package = res.Package
 	if ierr != nil {
 		rd.Status, rd.Detail = model.RunError, "app install failed: "+ierr.Error()

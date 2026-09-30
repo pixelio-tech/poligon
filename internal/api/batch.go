@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pancir/poligon/internal/auth"
+	"github.com/pancir/poligon/internal/install"
 	"github.com/pancir/poligon/internal/model"
 )
 
@@ -205,7 +206,8 @@ func (s *Server) batchInstall(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			_ = s.st.SetDeviceStatus(id, model.StatusBusy, time.Now())
-			res, ierr := s.inst.Run(ctx, dev, artifactPath)
+			res, ierr := s.inst.Run(ctx, dev, artifactPath,
+				install.Origin{User: u.Name, Via: "batch", Ref: batch, Name: names[dev.Platform]})
 			if ierr != nil {
 				results[i] = deviceResult{Device: id, Status: "failed", Detail: ierr.Error()}
 			} else {
