@@ -110,6 +110,7 @@ func (in *Installer) run(ctx context.Context, dev model.Device, artifactPath str
 		if err != nil {
 			return Result{}, err
 		}
+		defer os.RemoveAll(filepath.Dir(apks[0]))
 		pkg, ver := apkInfo(apks[0])
 		out, err := in.adb.InstallMultiple(ctx, dev.Serial, apks, true)
 		if err == nil && pkg != "" {
@@ -122,6 +123,7 @@ func (in *Installer) run(ctx context.Context, dev model.Device, artifactPath str
 		if err != nil {
 			return Result{}, err
 		}
+		defer os.RemoveAll(filepath.Dir(filepath.Dir(appBundle))) // the resign-* work dir
 		pkg := bundleID(filepath.Join(appBundle, "Info.plist"))
 		out, err := in.ios.Install(ctx, dev.UDID, dev.Specs.OSVersion, pkg, appBundle)
 		return Result{Output: out, Package: pkg}, err
@@ -140,6 +142,12 @@ func (in *Installer) expandAAB(ctx context.Context, aab string) ([]string, error
 	if err != nil {
 		return nil, err
 	}
+	ok := false
+	defer func() {
+		if !ok {
+			os.RemoveAll(outDir)
+		}
+	}()
 	apks := filepath.Join(outDir, "out.apks")
 	cmd := exec.CommandContext(ctx, "java", "-jar", in.opts.BundletoolJar,
 		"build-apks", "--mode=universal", "--bundle="+aab, "--output="+apks)
@@ -151,6 +159,7 @@ func (in *Installer) expandAAB(ctx context.Context, aab string) ([]string, error
 	if err := unzipOne(apks, "universal.apk", universal); err != nil {
 		return nil, err
 	}
+	ok = true
 	return []string{universal}, nil
 }
 
@@ -166,6 +175,12 @@ func (in *Installer) resignIPA(ctx context.Context, ipa, udid string) (string, e
 	if err != nil {
 		return "", err
 	}
+	ok := false
+	defer func() {
+		if !ok {
+			os.RemoveAll(work)
+		}
+	}()
 	if err := unzipDir(ipa, "Payload/", work); err != nil {
 		return "", err
 	}
@@ -183,6 +198,7 @@ func (in *Installer) resignIPA(ctx context.Context, ipa, udid string) (string, e
 	if err := in.resignApp(ctx, appDir, udid, work); err != nil {
 		return "", err
 	}
+	ok = true
 	return appDir, nil
 }
 

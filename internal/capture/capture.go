@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/pancir/poligon/internal/adb"
 	"github.com/pancir/poligon/internal/ios"
@@ -34,8 +36,20 @@ type syslogCapture struct {
 	path string
 }
 
+// syslogPattern names the capture files in os.TempDir. New removes leftovers
+// from a previous poligon process that died without Shutdown.
+const syslogPattern = "poligon-ios-syslog-*.log"
+
+// syslogMax caps a capture file. Everything before a run's ClearLogs is thrown
+// away anyway, so an idle device's syslog is emptied once it grows past this.
+const syslogMax = 256 << 20
+
 // New builds a Capturer. ic may be nil on an Android-only farm.
 func New(a *adb.ADB, ic *iosscreen.Controller, it ios.Tools) *Capturer {
+	old, _ := filepath.Glob(filepath.Join(os.TempDir(), syslogPattern))
+	for _, p := range old {
+		_ = os.Remove(p)
+	}
 	return &Capturer{adb: a, ios: ic, iosTools: it, syslog: map[string]*syslogCapture{}}
 }
 
@@ -59,11 +73,19 @@ func (c *Capturer) ensureSyslog(dev model.Device) (*syslogCapture, error) {
 	if sc, ok := c.syslog[dev.ID]; ok && sc.cmd.ProcessState == nil {
 		return sc, nil
 	}
-	f, err := os.CreateTemp("", "poligon-ios-syslog-*.log")
+	tmp, err := os.CreateTemp("", syslogPattern)
 	if err != nil {
 		return nil, err
 	}
-	path := f.Name()
+	path := tmp.Name()
+	tmp.Close()
+	// O_APPEND so a Truncate really resets the writer: without it idevicesyslog
+	// keeps writing at its old offset and the file fills up with NUL bytes.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		os.Remove(path)
+		return nil, err
+	}
 	cmd := c.iosTools.SyslogCommand(dev.UDID)
 	cmd.Stdout, cmd.Stderr = f, f
 	if err := cmd.Start(); err != nil {
@@ -71,7 +93,22 @@ func (c *Capturer) ensureSyslog(dev model.Device) (*syslogCapture, error) {
 		os.Remove(path)
 		return nil, err
 	}
-	go func() { _ = cmd.Wait(); f.Close() }()
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); f.Close(); close(done) }()
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				if fi, err := os.Stat(path); err == nil && fi.Size() > syslogMax {
+					_ = os.Truncate(path, 0)
+				}
+			}
+		}
+	}()
 	sc := &syslogCapture{cmd: cmd, path: path}
 	c.syslog[dev.ID] = sc
 	return sc, nil
